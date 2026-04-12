@@ -196,7 +196,7 @@ const TimelineFeatureItem = ({ feature, index, isLeft, isActive }) => {
     <div 
       ref={itemRef}
       data-feature-index={index}
-      className={`relative flex items-center ${isLeft ? 'lg:flex-row' : 'lg:flex-row-reverse'} flex-col lg:gap-8 gap-4`}
+      className={`relative flex items-center ${isLeft ? 'lg:flex-row' : 'lg:flex-row-reverse'} flex-col lg:gap-8 gap-4 min-h-[200px] lg:min-h-[300px]`}
     >
       {/* Content Card */}
       <div 
@@ -272,12 +272,16 @@ const TimelineFeatureItem = ({ feature, index, isLeft, isActive }) => {
         </div>
       </div>
 
-      {/* Center Node */}
+      {/* Center Node - positioned exactly on the timeline line */}
       <div 
         data-aos="zoom-in"
         data-aos-duration="500"
         data-aos-delay={aosDelay + 100}
-        className="hidden lg:flex absolute left-1/2 -translate-x-1/2 z-20"
+        className="hidden lg:flex absolute left-1/2 z-20 items-center justify-center"
+        style={{
+          top: '50%',
+          transform: 'translateX(-50%) translateY(-50%)'
+        }}
       >
         <div 
           className={`h-16 w-16 rounded-full bg-gradient-to-br ${feature.gradient} flex items-center justify-center shadow-lg shadow-purple-500/30 border-4 border-[#0a0118]
@@ -819,7 +823,7 @@ const FeaturesPage = () => {
                     {/* Image */}
                     <div className="relative aspect-[4/3] p-6">
                       <img 
-                        src="/workflow-diagram.png" 
+                        src="/images/workflow-diagram.png" 
                         alt="AI Multi-Agent Workflow Architecture"
                         className="w-full h-full object-contain rounded-xl"
                       />
@@ -897,11 +901,9 @@ const FeaturesPage = () => {
               ['Response Time', 'Minutes to Hours', 'Instant', true],
               ['Medication Tracking', 'Manual Logs', 'Automated', true],
               ['Location Safety', 'Periodic Check-ins', 'Real-time GPS', true],
-              ['Family Updates', 'Phone Calls', 'Live Dashboard', true],
-              ['Cognitive Exercises', 'Scheduled Sessions', 'Personalized AI', true],
             ].map(([feature, traditional, neurocare, highlight], index) => (
               <div 
-                key={index} 
+                              key={index} 
                 className={`grid grid-cols-3 group hover:bg-white/[0.03] transition-colors ${
                   index % 2 === 0 ? 'bg-transparent' : 'bg-white/[0.02]'
                 }`}

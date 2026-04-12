@@ -13,6 +13,11 @@ const DashboardShowcase = lazy(() => import('./pages/DashboardShowcase.jsx'));
 const AuthPages = lazy(() => import('./pages/AuthPages.jsx'));
 const AboutPage = lazy(() => import('./pages/AboutPage.jsx'));
 
+// ===== DOCTOR DASHBOARD MODULE (Completely Isolated) =====
+const DoctorDashboardRouter = lazy(() => import('./doctor-dashboard/index.jsx').then(m => ({ default: m.DoctorDashboardRouter })));
+const FamilyDashboardRouter = lazy(() => import('./doctor-dashboard/index.jsx').then(m => ({ default: m.FamilyDashboardRouter })));
+const PatientPage = lazy(() => import('./doctor-dashboard/pages/PatientPage.jsx'));
+
 // ===== PAGE LOADING PLACEHOLDER =====
 // Shows a minimal loading state that takes up space to prevent footer flash
 const PageLoadingPlaceholder = memo(() => (
@@ -119,6 +124,39 @@ const ScrollAnimationInitializer = memo(() => {
 });
 ScrollAnimationInitializer.displayName = 'ScrollAnimationInitializer';
 
+// ===== CONDITIONAL NAVBAR/FOOTER WRAPPER =====
+const ConditionalLayout = memo(({ children, isLoading }) => {
+  const location = useLocation();
+  const isDoctorOrFamilyRoute = location.pathname.startsWith('/doctor') || location.pathname.startsWith('/family');
+  const isPatientRoute = location.pathname.startsWith('/patient');
+  
+  return (
+    <div 
+      className="min-h-screen bg-[#0a0118] font-sans antialiased text-white flex flex-col animate-fade-in"
+    >
+      {/* Utility components */}
+      <ScrollToTop />
+      <ScrollAnimationInitializer />
+      
+      {/* Navigation - Hidden for Doctor/Family/Patient routes */}
+      {!isDoctorOrFamilyRoute && !isPatientRoute && (
+        <Navbar isExpanded={!isLoading} />
+      )}
+      
+      {/* Main content area */}
+      <main id="main-content" className="flex-1" role="main">
+        {children}
+      </main>
+      
+      {/* Footer - Hidden for Doctor/Family/Patient routes */}
+      {!isDoctorOrFamilyRoute && !isPatientRoute && (
+        <Footer />
+      )}
+    </div>
+  );
+});
+ConditionalLayout.displayName = 'ConditionalLayout';
+
 // ===== MAIN APP COMPONENT =====
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -134,18 +172,7 @@ function App() {
       
       {/* Main app content - completely hidden during loading to prevent scrollbar */}
       {!isLoading && (
-      <div 
-        className="min-h-screen bg-[#0a0118] font-sans antialiased text-white flex flex-col animate-fade-in"
-      >
-        {/* Utility components */}
-        <ScrollToTop />
-        <ScrollAnimationInitializer />
-        
-        {/* Navigation - isExpanded triggers the width animation after loader */}
-        <Navbar isExpanded={!isLoading} />
-        
-        {/* Main content area */}
-        <main id="main-content" className="flex-1" role="main">
+        <ConditionalLayout isLoading={isLoading}>
           <Suspense fallback={<PageLoadingPlaceholder />}>
             <Routes>
               <Route path="/" element={<LandingPage />} />
@@ -155,13 +182,16 @@ function App() {
               <Route path="/doctor-dashboard" element={<DashboardShowcase />} />
               <Route path="/auth/*" element={<AuthPages />} />
               <Route path="/about" element={<AboutPage />} />
+              
+              {/* ===== DOCTOR DASHBOARD MODULE - Completely Isolated ===== */}
+              <Route path="/doctor/*" element={<DoctorDashboardRouter />} />
+              <Route path="/family/*" element={<FamilyDashboardRouter />} />
+              
+              {/* ===== PATIENT PAGE - Public, No Auth ===== */}
+              <Route path="/patient" element={<PatientPage />} />
             </Routes>
           </Suspense>
-        </main>
-        
-        {/* Footer */}
-        <Footer />
-      </div>
+        </ConditionalLayout>
       )}
     </Router>
   );

@@ -340,7 +340,7 @@ const LandingPage = () => {
                 
                 {/* Animated SVG */}
                 <img 
-                  src="/alzheimer-animate.svg" 
+                  src="/images/alzheimer-animate.svg" 
                   alt="Alzheimer's Care Animation" 
                   className="relative w-full max-w-lg lg:max-w-xl h-auto"
                 />
