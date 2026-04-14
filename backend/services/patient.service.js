@@ -2,6 +2,7 @@ import Patient from '../models/Patient.model.js';
 import Doctor from '../models/Doctor.model.js';
 import Family from '../models/Family.model.js';
 import Notification from '../models/Notification.model.js';
+import User from '../models/User.model.js';
 import familyAuthService from './familyAuth.service.js';
 
 class PatientService {
@@ -9,6 +10,12 @@ class PatientService {
    * Create new patient with family account
    */
   async createPatient(patientData, familyData, doctorId) {
+    const normalizedPatientEmail = String(patientData.email || '').toLowerCase().trim();
+    const existingPatientEmail = await Patient.findOne({ email: normalizedPatientEmail });
+    if (existingPatientEmail) {
+      throw { status: 400, message: 'A patient with this email already exists' };
+    }
+
     // Generate patient number
     const count = await Patient.countDocuments();
     const patientNumber = `ALZ-${String(count + 1).padStart(6, '0')}`;
@@ -18,6 +25,8 @@ class PatientService {
       patientNumber,
       firstName: patientData.firstName,
       lastName: patientData.lastName,
+      email: normalizedPatientEmail,
+      password: patientData.password,
       dateOfBirth: patientData.dateOfBirth,
       age: patientData.age,
       gender: patientData.gender,
@@ -30,6 +39,14 @@ class PatientService {
       profileImage: patientData.profileImage,
       address: patientData.address,
       doctor: doctorId
+    });
+
+    await User.create({
+      email: normalizedPatientEmail,
+      password: patientData.password,
+      role: 'patient',
+      patient: patient._id,
+      isActive: patient.isActive
     });
 
     // Create family account (mandatory)
@@ -117,6 +134,10 @@ class PatientService {
       }
     }
 
+    if (userRole === 'patient' && patient._id.toString() !== userId.toString()) {
+      throw { status: 403, message: 'You are not authorized to view this patient' };
+    }
+
     return patient;
   }
 
@@ -199,6 +220,17 @@ class PatientService {
     // Check authorization
     if (userRole === 'doctor' && patient.doctor.toString() !== userId.toString()) {
       throw { status: 403, message: 'You are not authorized to view this patient' };
+    }
+
+    if (userRole === 'family') {
+      const family = await Family.findById(userId);
+      if (!family || family.patient.toString() !== patientId.toString()) {
+        throw { status: 403, message: 'You are not authorized to view this patient notes' };
+      }
+    }
+
+    if (userRole === 'patient' && patient._id.toString() !== userId.toString()) {
+      throw { status: 403, message: 'You are not authorized to view this patient notes' };
     }
 
     return patient.notes.sort((a, b) => b.createdAt - a.createdAt);

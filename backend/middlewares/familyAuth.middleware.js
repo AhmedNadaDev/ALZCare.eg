@@ -1,5 +1,7 @@
 import jwt from 'jsonwebtoken';
 import Family from '../models/Family.model.js';
+import Patient from '../models/Patient.model.js';
+const getJwtSecret = () => process.env.JWT_SECRET;
 
 /**
  * Family Authentication Middleware
@@ -25,7 +27,7 @@ export const protectFamily = async (req, res, next) => {
 
     try {
       // Verify token using FAMILY-specific secret
-      const decoded = jwt.verify(token, process.env.FAMILY_JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
 
       // Check if token is for a family member
       if (decoded.role !== 'family') {
@@ -96,7 +98,7 @@ export const generateFamilyToken = (family) => {
       role: 'family',
       patientId: family.patient
     },
-    process.env.FAMILY_JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 };
@@ -144,7 +146,7 @@ export const protectDoctorOrFamily = async (req, res, next) => {
 
     // Try doctor token first
     try {
-      const decoded = jwt.verify(token, process.env.DOCTOR_JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
       if (decoded.role === 'doctor') {
         const Doctor = (await import('../models/Doctor.model.js')).default;
         const doctor = await Doctor.findById(decoded.id).select('-password');
@@ -161,7 +163,7 @@ export const protectDoctorOrFamily = async (req, res, next) => {
 
     // Try family token
     try {
-      const decoded = jwt.verify(token, process.env.FAMILY_JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
       if (decoded.role === 'family') {
         const family = await Family.findById(decoded.id)
           .select('-password')
@@ -176,6 +178,23 @@ export const protectDoctorOrFamily = async (req, res, next) => {
       }
     } catch (err) {
       // Not a valid family token either
+    }
+
+    // Try patient token
+    try {
+      const decoded = jwt.verify(token, getJwtSecret());
+      if (decoded.role === 'patient') {
+        const patient = await Patient.findById(decoded.id).select('-password');
+        if (patient && patient.isActive) {
+          req.patient = patient;
+          req.user = patient;
+          req.userRole = 'patient';
+          req.patientId = patient._id;
+          return next();
+        }
+      }
+    } catch (err) {
+      // Not a valid patient token either
     }
 
     return res.status(401).json({

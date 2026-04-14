@@ -68,7 +68,7 @@ class PatientController {
    */
   async getPatient(req, res, next) {
     try {
-      const userId = req.doctor?._id || req.family?._id;
+      const userId = req.doctor?._id || req.family?._id || req.patient?._id;
       const userRole = req.userRole;
       
       const patient = await patientService.getPatientById(
@@ -146,7 +146,7 @@ class PatientController {
    */
   async getNotes(req, res, next) {
     try {
-      const userId = req.doctor?._id || req.family?._id;
+      const userId = req.doctor?._id || req.family?._id || req.patient?._id;
       const userRole = req.userRole;
       
       const notes = await patientService.getPatientNotes(
@@ -217,7 +217,7 @@ class PatientController {
    */
   async getPatientStats(req, res, next) {
     try {
-      const userId = req.doctor?._id || req.family?._id;
+      const userId = req.doctor?._id || req.family?._id || req.patient?._id;
       const userRole = req.userRole;
       
       const stats = await patientService.getPatientStats(

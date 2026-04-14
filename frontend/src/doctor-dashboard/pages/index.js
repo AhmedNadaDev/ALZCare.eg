@@ -1,9 +1,0 @@
-export { default as DoctorLogin } from './DoctorLogin';
-export { default as DoctorSignup } from './DoctorSignup';
-export { default as FamilyLogin } from './FamilyLogin';
-export { default as DoctorDashboard } from './DoctorDashboard';
-export { default as FamilyDashboard } from './FamilyDashboard';
-export { default as AddPatient } from './AddPatient';
-export { default as PatientDetails } from './PatientDetails';
-export { default as FamilyPatientDetails } from './FamilyPatientDetails';
-export { default as PatientPage } from './PatientPage';

@@ -104,6 +104,37 @@ export const validateFamilyLogin = [
 ];
 
 /**
+ * Patient Login Validation
+ */
+export const validatePatientLogin = [
+  body('email')
+    .trim()
+    .notEmpty().withMessage('Email is required')
+    .isEmail().withMessage('Please enter a valid email')
+    .normalizeEmail(),
+  body('password')
+    .notEmpty().withMessage('Password is required'),
+  handleValidationErrors
+];
+
+/**
+ * Unified Login Validation
+ */
+export const validateUnifiedLogin = [
+  body('email')
+    .trim()
+    .notEmpty().withMessage('Email is required')
+    .isEmail().withMessage('Please enter a valid email')
+    .normalizeEmail(),
+  body('password')
+    .notEmpty().withMessage('Password is required'),
+  body('role')
+    .notEmpty().withMessage('Role is required')
+    .isIn(['doctor', 'family', 'patient']).withMessage('Role must be doctor, family, or patient'),
+  handleValidationErrors
+];
+
+/**
  * Patient Creation Validation
  */
 export const validatePatientCreate = [
@@ -115,6 +146,14 @@ export const validatePatientCreate = [
     .trim()
     .notEmpty().withMessage('Patient last name is required')
     .isLength({ max: 50 }).withMessage('Last name cannot exceed 50 characters'),
+  body('email')
+    .trim()
+    .notEmpty().withMessage('Patient email is required')
+    .isEmail().withMessage('Please enter a valid patient email')
+    .normalizeEmail(),
+  body('password')
+    .notEmpty().withMessage('Patient password is required')
+    .isLength({ min: 8 }).withMessage('Patient password must be at least 8 characters'),
   body('dateOfBirth')
     .notEmpty().withMessage('Date of birth is required')
     .isISO8601().withMessage('Please enter a valid date'),
@@ -242,6 +281,8 @@ export default {
   validateDoctorSignup,
   validateDoctorLogin,
   validateFamilyLogin,
+  validatePatientLogin,
+  validateUnifiedLogin,
   validatePatientCreate,
   validatePatientUpdate,
   validateMedicationCreate,

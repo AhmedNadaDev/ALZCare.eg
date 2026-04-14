@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 import Doctor from '../models/Doctor.model.js';
 
+const getJwtSecret = () => process.env.JWT_SECRET;
+
 /**
  * Doctor Authentication Middleware
  * This is completely separate from any existing auth system
@@ -25,7 +27,7 @@ export const protectDoctor = async (req, res, next) => {
 
     try {
       // Verify token using DOCTOR-specific secret
-      const decoded = jwt.verify(token, process.env.DOCTOR_JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
 
       // Check if token is for a doctor
       if (decoded.role !== 'doctor') {
@@ -92,7 +94,7 @@ export const generateDoctorToken = (doctor) => {
       email: doctor.email,
       role: 'doctor'
     },
-    process.env.DOCTOR_JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 };
@@ -110,7 +112,7 @@ export const optionalDoctorAuth = async (req, res, next) => {
 
     if (token) {
       try {
-        const decoded = jwt.verify(token, process.env.DOCTOR_JWT_SECRET);
+        const decoded = jwt.verify(token, getJwtSecret());
         if (decoded.role === 'doctor') {
           const doctor = await Doctor.findById(decoded.id).select('-password');
           if (doctor && doctor.isActive) {

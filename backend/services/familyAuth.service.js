@@ -1,5 +1,6 @@
 import Family from '../models/Family.model.js';
 import Patient from '../models/Patient.model.js';
+import User from '../models/User.model.js';
 import { generateFamilyToken } from '../middlewares/familyAuth.middleware.js';
 
 class FamilyAuthService {
@@ -41,6 +42,14 @@ class FamilyAuthService {
       createdBy: doctorId
     });
 
+    await User.create({
+      email: family.email,
+      password: familyData.password,
+      role: 'family',
+      family: family._id,
+      isActive: family.isActive
+    });
+
     // Link family to patient
     patient.family = family._id;
     await patient.save();
@@ -56,8 +65,10 @@ class FamilyAuthService {
    * Login family member
    */
   async login(email, password) {
+    const normalizedEmail = String(email || '').toLowerCase().trim();
+
     // Find family with password
-    const family = await Family.findOne({ email })
+    const family = await Family.findOne({ email: normalizedEmail })
       .select('+password')
       .populate('patient', 'firstName lastName patientNumber alzheimerLevel status profileImage');
 
@@ -74,15 +85,37 @@ class FamilyAuthService {
       throw { status: 403, message: 'Associated patient not found. Please contact your doctor.' };
     }
 
-    // Check password
-    const isMatch = await family.comparePassword(password);
+    let user = await User.findOne({ email: normalizedEmail, role: 'family' }).select('+password');
+    let isMatch = false;
+
+    if (user) {
+      isMatch = await user.comparePassword(password);
+    } else {
+      // Backfill legacy family accounts into unified User auth store
+      isMatch = await family.comparePassword(password);
+      if (isMatch) {
+        user = await User.create({
+          email: family.email,
+          password,
+          role: 'family',
+          family: family._id,
+          isActive: family.isActive
+        });
+      }
+    }
+
     if (!isMatch) {
       throw { status: 401, message: 'Invalid email or password' };
     }
 
     // Update last login
-    family.lastLogin = new Date();
+    const now = new Date();
+    family.lastLogin = now;
     await family.save();
+    if (user) {
+      user.lastLogin = now;
+      await user.save();
+    }
 
     // Generate token
     const token = generateFamilyToken(family);
@@ -155,6 +188,12 @@ class FamilyAuthService {
     // Update password
     family.password = newPassword;
     await family.save();
+
+    const authUser = await User.findOne({ email: family.email, role: 'family' }).select('+password');
+    if (authUser) {
+      authUser.password = newPassword;
+      await authUser.save();
+    }
 
     return { message: 'Password updated successfully' };
   }

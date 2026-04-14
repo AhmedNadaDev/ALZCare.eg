@@ -1,4 +1,5 @@
 import Doctor from '../models/Doctor.model.js';
+import User from '../models/User.model.js';
 import { generateDoctorToken } from '../middlewares/doctorAuth.middleware.js';
 
 class DoctorAuthService {
@@ -30,6 +31,14 @@ class DoctorAuthService {
       phone: doctorData.phone
     });
 
+    await User.create({
+      email: doctor.email,
+      password: doctorData.password,
+      role: 'doctor',
+      doctor: doctor._id,
+      isActive: doctor.isActive
+    });
+
     // Generate token
     const token = generateDoctorToken(doctor);
 
@@ -47,8 +56,10 @@ class DoctorAuthService {
    * Login doctor
    */
   async login(email, password) {
+    const normalizedEmail = String(email || '').toLowerCase().trim();
+
     // Find doctor with password
-    const doctor = await Doctor.findOne({ email }).select('+password');
+    const doctor = await Doctor.findOne({ email: normalizedEmail }).select('+password');
 
     if (!doctor) {
       throw { status: 401, message: 'Invalid email or password' };
@@ -58,15 +69,37 @@ class DoctorAuthService {
       throw { status: 403, message: 'Your account has been deactivated. Please contact support.' };
     }
 
-    // Check password
-    const isMatch = await doctor.comparePassword(password);
+    let user = await User.findOne({ email: normalizedEmail, role: 'doctor' }).select('+password');
+    let isMatch = false;
+
+    if (user) {
+      isMatch = await user.comparePassword(password);
+    } else {
+      // Backfill legacy doctor accounts into unified User auth store
+      isMatch = await doctor.comparePassword(password);
+      if (isMatch) {
+        user = await User.create({
+          email: doctor.email,
+          password,
+          role: 'doctor',
+          doctor: doctor._id,
+          isActive: doctor.isActive
+        });
+      }
+    }
+
     if (!isMatch) {
       throw { status: 401, message: 'Invalid email or password' };
     }
 
     // Update last login
-    doctor.lastLogin = new Date();
+    const now = new Date();
+    doctor.lastLogin = now;
     await doctor.save();
+    if (user) {
+      user.lastLogin = now;
+      await user.save();
+    }
 
     // Generate token
     const token = generateDoctorToken(doctor);
@@ -135,6 +168,12 @@ class DoctorAuthService {
     // Update password
     doctor.password = newPassword;
     await doctor.save();
+
+    const authUser = await User.findOne({ email: doctor.email, role: 'doctor' }).select('+password');
+    if (authUser) {
+      authUser.password = newPassword;
+      await authUser.save();
+    }
 
     return { message: 'Password updated successfully' };
   }

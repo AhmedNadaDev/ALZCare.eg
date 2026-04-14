@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../modules/shared/auth/AuthContext';
 
 // ===== ICONS =====
 const UserCircleIcon = () => (
@@ -115,11 +116,22 @@ const ArrowRightIcon = () => (
   </svg>
 );
 
+const LoadingSpinner = () => (
+  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+  </svg>
+);
+
 // ===== MAIN COMPONENT =====
 const AuthPages = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { doctorLogin, familyLogin, patientLogin, doctorSignup, error, clearError } = useAuth();
+  
   const [showPassword, setShowPassword] = useState(false);
   const [userType, setUserType] = useState('family');
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -133,12 +145,64 @@ const AuthPages = () => {
   const isLoginPage = location.pathname.includes('/login') || location.pathname === '/auth' || location.pathname === '/auth/';
   const isSignupPage = location.pathname.includes('/signup');
 
+  // Sync userType based on query params if any (optional)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const type = params.get('type');
+    if (type && ['family', 'doctor', 'patient'].includes(type)) {
+      setUserType(type);
+    }
+    clearError();
+  }, [location.pathname, location.search]);
+
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
+    if (error) clearError();
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      if (isLoginPage) {
+        if (userType === 'doctor') {
+          await doctorLogin(formData.email, formData.password);
+          navigate('/doctor/dashboard');
+        } else if (userType === 'family') {
+          await familyLogin(formData.email, formData.password);
+          navigate('/family/dashboard');
+        } else if (userType === 'patient') {
+          await patientLogin(formData.email, formData.password);
+          navigate('/patient');
+        }
+      } else {
+        // Signup logic
+        if (userType === 'doctor') {
+          await doctorSignup({
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            email: formData.email,
+            password: formData.password,
+            licenseNumber: formData.licenseNumber
+          });
+          navigate('/doctor/dashboard');
+        } else if (userType === 'family') {
+          // Family signup logic (usually not public, but we can call an API if exists)
+          alert('Family registration is typically handled by your doctor. Please contact them to create an account.');
+        } else {
+          alert('Patient accounts are created by doctors. Please use your assigned login credentials.');
+        }
+      }
+    } catch (err) {
+      console.error('Auth error:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const userTypes = [
@@ -274,39 +338,47 @@ const AuthPages = () => {
               </p>
             </div>
 
-            {/* Role Selection (Signup only) */}
-            {isSignupPage && (
-              <div className="mb-8">
-                <p className="text-sm font-medium text-gray-300 mb-3">I am a:</p>
-                <div className="grid grid-cols-3 gap-3">
-                  {userTypes.map((type) => (
-                    <button
-                      key={type.id}
-                      type="button"
-                      onClick={() => setUserType(type.id)}
-                      className={`p-4 rounded-xl border-2 transition-all duration-300 text-center ${
-                        userType === type.id
-                          ? 'border-purple-500 bg-purple-500/20 shadow-md'
-                          : 'border-white/10 hover:border-purple-500/30 hover:bg-white/[0.03]'
-                      }`}
-                    >
-                      <div className={`h-12 w-12 rounded-xl flex items-center justify-center mx-auto mb-2 transition-colors ${
-                        userType === type.id ? 'bg-purple-600 text-white' : 'bg-white/[0.05] text-gray-400'
-                      }`}>
-                        <type.icon />
-                      </div>
-                      <span className={`font-medium text-sm block ${userType === type.id ? 'text-purple-300' : 'text-gray-300'}`}>
-                        {type.label}
-                      </span>
-                      <span className="text-xs text-gray-500 hidden sm:block">{type.description}</span>
-                    </button>
-                  ))}
-                </div>
+            {/* Error Message */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
+                {error}
               </div>
             )}
 
+            {/* Role Selection */}
+            <div className="mb-8">
+              <p className="text-sm font-medium text-gray-300 mb-3">I am a:</p>
+              <div className="grid grid-cols-3 gap-3">
+                {userTypes.map((type) => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => {
+                      setUserType(type.id);
+                      clearError();
+                    }}
+                    className={`p-4 rounded-xl border-2 transition-all duration-300 text-center ${
+                      userType === type.id
+                        ? 'border-purple-500 bg-purple-500/20 shadow-md'
+                        : 'border-white/10 hover:border-purple-500/30 hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div className={`h-12 w-12 rounded-xl flex items-center justify-center mx-auto mb-2 transition-colors ${
+                      userType === type.id ? 'bg-purple-600 text-white' : 'bg-white/[0.05] text-gray-400'
+                    }`}>
+                      <type.icon />
+                    </div>
+                    <span className={`font-medium text-sm block ${userType === type.id ? 'text-purple-300' : 'text-gray-300'}`}>
+                      {type.label}
+                    </span>
+                    <span className="text-xs text-gray-500 hidden sm:block truncate">{type.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Auth Form */}
-            <form className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-5">
               {isSignupPage && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -320,6 +392,7 @@ const AuthPages = () => {
                       onChange={handleInputChange}
                       className="w-full px-4 py-3.5 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:bg-white/[0.08] focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none transition-all"
                       placeholder="Ahmed"
+                      required={isSignupPage}
                     />
                   </div>
                   <div>
@@ -333,6 +406,7 @@ const AuthPages = () => {
                       onChange={handleInputChange}
                       className="w-full px-4 py-3.5 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:bg-white/[0.08] focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none transition-all"
                       placeholder="Nada"
+                      required={isSignupPage}
                     />
                   </div>
                 </div>
@@ -353,6 +427,7 @@ const AuthPages = () => {
                     onChange={handleInputChange}
                     className="w-full pl-12 pr-4 py-3.5 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:bg-white/[0.08] focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none transition-all"
                     placeholder="ahmed.nada@example.com"
+                    required
                   />
                 </div>
               </div>
@@ -373,6 +448,7 @@ const AuthPages = () => {
                       onChange={handleInputChange}
                       className="w-full pl-12 pr-4 py-3.5 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:bg-white/[0.08] focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none transition-all"
                       placeholder="Enter license number"
+                      required={isSignupPage && userType === 'doctor'}
                     />
                   </div>
                 </div>
@@ -393,6 +469,7 @@ const AuthPages = () => {
                     onChange={handleInputChange}
                     className="w-full pl-12 pr-12 py-3.5 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:bg-white/[0.08] focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none transition-all"
                     placeholder="Enter your password"
+                    required
                   />
                   <button
                     type="button"
@@ -434,6 +511,7 @@ const AuthPages = () => {
                       checked={formData.agreeTerms}
                       onChange={handleInputChange}
                       className="h-4 w-4 text-purple-600 rounded focus:ring-purple-500 bg-white/[0.05] border-white/20 mt-1"
+                      required
                     />
                     <span className="text-sm text-gray-400 leading-relaxed">
                       I agree to the <a href="#" className="text-purple-400 hover:underline">Terms of Service</a> and{' '}
@@ -446,10 +524,17 @@ const AuthPages = () => {
 
               <button
                 type="submit"
-                className="w-full py-4 bg-gradient-to-r from-purple-600 to-violet-600 text-white font-semibold rounded-xl shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group"
+                disabled={isLoading}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-violet-600 text-white font-semibold rounded-xl shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <span>{isLoginPage ? 'Sign In' : 'Create Account'}</span>
-                <ArrowRightIcon className="group-hover:translate-x-1 transition-transform" />
+                {isLoading ? (
+                  <LoadingSpinner />
+                ) : (
+                  <>
+                    <span>{isLoginPage ? 'Sign In' : 'Create Account'}</span>
+                    <ArrowRightIcon className="group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
               </button>
             </form>
 

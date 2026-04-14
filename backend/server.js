@@ -14,12 +14,15 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 // Route imports
 import doctorAuthRoutes from './routes/doctorAuth.routes.js';
 import familyAuthRoutes from './routes/familyAuth.routes.js';
+import authRoutes from './routes/auth.routes.js';
 import patientRoutes from './routes/patient.routes.js';
 import medicationRoutes from './routes/medication.routes.js';
 import familyMedicationRoutes from './routes/familyMedication.routes.js';
 import moodRoutes from './routes/mood.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import faceRecognitionRoutes, { faceRecognitionPublicRoutes } from './routes/faceRecognition.routes.js';
+import faceRecognitionController from './controllers/faceRecognition.controller.js';
+import chatbotRoutes from './modules/chatbot/node_client/chatbot.routes.js';
 
 const app = express();
 
@@ -43,6 +46,7 @@ app.get('/api/health', (req, res) => {
 // API Routes - All isolated under /api/doctor and /api/family
 app.use('/api/doctor/auth', doctorAuthRoutes);
 app.use('/api/family/auth', familyAuthRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/doctor/patients', patientRoutes);
 app.use('/api/medications', medicationRoutes);
 app.use('/api/family/medications', familyMedicationRoutes);
@@ -50,6 +54,12 @@ app.use('/api/moods', moodRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/family/face-recognition', faceRecognitionRoutes);
 app.use('/api/face-recognition', faceRecognitionPublicRoutes);
+app.use('/api/chatbot', chatbotRoutes);
+
+// ML aliases (same handlers as existing face-recognition routes — backward compatible)
+app.post('/api/ml/predict-person', (req, res, next) =>
+  faceRecognitionController.recognizeFacePublic(req, res, next)
+);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
