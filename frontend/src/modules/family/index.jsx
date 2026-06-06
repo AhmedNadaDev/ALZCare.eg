@@ -5,6 +5,8 @@ import FamilyLayout from './FamilyLayout';
 import FamilyDashboard from '../../features/family/dashboard/pages/FamilyDashboard';
 import FamilyAssistantPage from '../../features/family/dashboard/pages/FamilyAssistantPage';
 import FamilyPatientDetails from '../../features/family/patients/pages/FamilyPatientDetails';
+import RegisterPerson from '../../features/family/register/pages/RegisterPerson';
+import MemoryHub from '../../features/family/cognitive/pages/MemoryHub';
 
 const FamilyProtectedRoute = ({ children }) => {
   const { isAuthenticated, isFamily, loading } = useAuth();
@@ -20,8 +22,9 @@ const FamilyDashboardRouter = () => {
       <Route path="/signup" element={<Navigate to="/auth/signup?type=family" replace />} />
       <Route element={<FamilyProtectedRoute><FamilyLayout /></FamilyProtectedRoute>}>
         <Route path="dashboard" element={<FamilyDashboard />} />
-        <Route path="register-person" element={<FamilyDashboard initialTab="register" />} />
+        <Route path="register-person" element={<RegisterPerson />} />
         <Route path="assistant" element={<FamilyAssistantPage />} />
+        <Route path="memory" element={<MemoryHub />} />
         <Route path="patients/:id" element={<FamilyPatientDetails />} />
       </Route>
       <Route path="/" element={<Navigate to="/family/dashboard" replace />} />

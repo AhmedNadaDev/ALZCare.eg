@@ -2,6 +2,10 @@ import Medication from '../models/Medication.model.js';
 import Patient from '../models/Patient.model.js';
 import Family from '../models/Family.model.js';
 import Notification from '../models/Notification.model.js';
+import DailyPlan from '../modules/dailyPlan/dailyPlan.model.js';
+import dailyPlanService from '../modules/dailyPlan/dailyPlan.service.js';
+import { emitToPatientRoom } from '../modules/socket/socketManager.js';
+import { cancelPlanTimers, scheduleForPlan } from '../modules/dailyPlan/dailyPlan.scheduler.js';
 
 class MedicationService {
   /**
@@ -50,6 +54,27 @@ class MedicationService {
           schedule: medication.schedule
         }
       });
+    }
+
+    // Auto-inject into today's DailyPlan for each scheduled time today
+    try {
+      const today = new Date();
+      const dayOfWeek = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][today.getDay()];
+      for (const slot of (medication.schedule || [])) {
+        if (slot.days && slot.days.includes(dayOfWeek)) {
+          await dailyPlanService.injectMedicationEvent({
+            patientId: patient._id,
+            medicationId: medication._id,
+            medicationName: medication.name,
+            scheduledTime: slot.time,
+            date: today,
+            createdById: doctorId,
+            createdByModel: 'Doctor'
+          });
+        }
+      }
+    } catch (planErr) {
+      console.warn('[MedicationService] DailyPlan injection failed:', planErr.message);
     }
 
     return medication;
@@ -125,6 +150,11 @@ class MedicationService {
     Object.assign(medication, updateData);
     await medication.save();
 
+    // When the schedule changes, resync today's DailyPlan to avoid stale events
+    if (updateData.schedule) {
+      await this._resyncDailyPlanForMedication(medication);
+    }
+
     // Notify family if schedule changed
     if (updateData.schedule) {
       const patient = await Patient.findById(medication.patient);
@@ -165,6 +195,10 @@ class MedicationService {
     medication.isActive = false;
     medication.endDate = new Date();
     await medication.save();
+
+    // Cancel any pending DailyPlan events tied to this medication so the
+    // patient is not prompted to take a discontinued drug.
+    await this._cancelPendingMedicationEvents(medicationId, medication.patient);
 
     // Notify family
     const patient = await Patient.findById(medication.patient);
@@ -455,8 +489,129 @@ class MedicationService {
       }
     });
 
+    // Auto-inject into today's DailyPlan
+    try {
+      const today = new Date();
+      const dayOfWeek = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][today.getDay()];
+      for (const slot of (medication.schedule || [])) {
+        if (slot.days && slot.days.includes(dayOfWeek)) {
+          await dailyPlanService.injectMedicationEvent({
+            patientId: patient._id,
+            medicationId: medication._id,
+            medicationName: medication.name,
+            scheduledTime: slot.time,
+            date: today,
+            createdById: familyId,
+            createdByModel: 'Family'
+          });
+        }
+      }
+    } catch (planErr) {
+      console.warn('[MedicationService] DailyPlan injection failed:', planErr.message);
+    }
+
     return medication;
   }
+
+  // ── Internal helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Cancel all today's pending DailyPlan events linked to a specific medication.
+   * Called when a medication is discontinued.
+   */
+  async _cancelPendingMedicationEvents(medicationId, patientId) {
+    try {
+      const now   = new Date();
+      const start = new Date(now); start.setHours(0, 0, 0, 0);
+      const end   = new Date(now); end.setHours(23, 59, 59, 999);
+
+      const plan = await DailyPlan.findOne({
+        patientId,
+        date: { $gte: start, $lte: end },
+        'events.medicationId': medicationId,
+      });
+      if (!plan) return;
+
+      let changed = false;
+      for (const event of plan.events) {
+        if (
+          event.medicationId?.toString() === medicationId.toString() &&
+          event.status === 'pending'
+        ) {
+          event.status = 'missed';
+          if (!event.response) event.response = {};
+          event.response.decisionSource = 'manual';
+          event.response.reasoning = 'Medication discontinued — event auto-cancelled';
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await plan.save();
+        // Cancel in-memory scheduler timers and emit real-time update
+        cancelPlanTimers(plan);
+        emitToPatientRoom(patientId.toString(), 'dailyPlan:updated', {
+          plan: plan.toObject()
+        });
+        console.log(`[MedicationService] Cancelled pending DailyPlan events for discontinued medication ${medicationId}`);
+      }
+    } catch (err) {
+      console.warn('[MedicationService] _cancelPendingMedicationEvents failed:', err.message);
+    }
+  }
+
+  /**
+   * Remove today's pending DailyPlan events for a medication whose schedule
+   * just changed, then re-inject based on the new schedule.
+   * Called when updateMedication receives new schedule data.
+   */
+  async _resyncDailyPlanForMedication(medication) {
+    try {
+      const now   = new Date();
+      const start = new Date(now); start.setHours(0, 0, 0, 0);
+      const end   = new Date(now); end.setHours(23, 59, 59, 999);
+
+      // Step 1: Remove all pending events for this medication from today's plan
+      const plan = await DailyPlan.findOne({
+        patientId: medication.patient,
+        date: { $gte: start, $lte: end },
+      });
+
+      if (plan) {
+        const before = plan.events.length;
+        plan.events = plan.events.filter(e =>
+          !(e.medicationId?.toString() === medication._id.toString() && e.status === 'pending')
+        );
+        if (plan.events.length !== before) {
+          await plan.save();
+          cancelPlanTimers(plan);
+          console.log(`[MedicationService] Removed ${before - plan.events.length} stale DailyPlan events for medication ${medication._id}`);
+        }
+      }
+
+      // Step 2: Re-inject based on new schedule
+      const dayOfWeek = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][now.getDay()];
+      for (const slot of (medication.schedule || [])) {
+        if (slot.days?.includes(dayOfWeek)) {
+          await dailyPlanService.injectMedicationEvent({
+            patientId:       medication.patient,
+            medicationId:    medication._id,
+            medicationName:  medication.name,
+            scheduledTime:   slot.time,
+            date:            now,
+            createdById:     medication.prescribedBy,
+            createdByModel:  'Doctor',
+          });
+        }
+      }
+
+      console.log(`[MedicationService] DailyPlan resync complete for medication ${medication._id}`);
+    } catch (err) {
+      console.warn('[MedicationService] _resyncDailyPlanForMedication failed:', err.message);
+    }
+  }
+
+  // ── Family: Delete medication ─────────────────────────────────────────────
 
   /**
    * Family: Delete medication (only if added by family)

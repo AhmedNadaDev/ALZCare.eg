@@ -1,1 +1,1 @@
-export { medicationsAPI, moodsAPI, familyMedicationsAPI } from '../../../../modules/shared/api/api';
+export { medicationsAPI, moodsAPI, familyMedicationsAPI, aiMoodAPI } from '../../../../modules/shared/api/api';

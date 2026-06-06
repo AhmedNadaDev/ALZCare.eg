@@ -71,6 +71,10 @@ export default {
         'card-hover': '0 20px 40px -12px rgba(124, 58, 237, 0.25)',
         'elevated': '0 25px 50px -12px rgba(0, 0, 0, 0.15)',
       },
+      // Smartwatch / wearable breakpoint — anything below 480px is treated as watch
+      screens: {
+        'xs': '480px',
+      },
       backdropBlur: {
         xs: '2px',
       },

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import Counter from './Counter.model.js';
 
 const patientSchema = new mongoose.Schema({
   patientNumber: {
@@ -148,16 +149,23 @@ patientSchema.virtual('calculatedAge').get(function() {
   return age;
 });
 
-// Generate patient number before saving
+// Generate patientNumber BEFORE validation runs so the required check passes.
+// Mongoose execution order: pre('validate') → validation → pre('save') → DB insert.
+// If we generate in pre('save'), validation already failed. Must use pre('validate').
+patientSchema.pre('validate', async function(next) {
+  if (this.isNew && !this.patientNumber) {
+    const seq = await Counter.getNextSequence('patientNumber');
+    this.patientNumber = `ALZ-${String(seq).padStart(6, '0')}`;
+    console.log(`[PatientNumber] Generated atomically: ${this.patientNumber}`);
+  }
+  next();
+});
+
+// Hash password before saving (runs after validation — that is fine for passwords).
 patientSchema.pre('save', async function(next) {
   if (this.isModified('password')) {
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
-  }
-
-  if (!this.patientNumber) {
-    const count = await mongoose.model('Patient').countDocuments();
-    this.patientNumber = `ALZ-${String(count + 1).padStart(6, '0')}`;
   }
   next();
 });

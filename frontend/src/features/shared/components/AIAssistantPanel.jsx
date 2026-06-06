@@ -1,9 +1,13 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { BrainIcon } from '../icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faBrain, faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 import { askChatbot } from '../../../modules/chatbot/services/chatbotService';
 
+let _msgId = 0;
+const nextId = () => ++_msgId;
+
 const buildWelcomeMessage = (roleLabel, patientId) => ({
-  id: 1,
+  id: nextId(),
   sender: 'assistant',
   text: patientId
     ? `Hello ${roleLabel}! Patient context is active. You can ask personalized questions about this patient's care, medications, and history.`
@@ -49,7 +53,7 @@ const AIAssistantPanel = ({ roleLabel = 'User', patientId = null, patientName = 
     const text = input.trim();
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    setMessages((prev) => [...prev, { id: Date.now(), sender: 'user', text, time: now }]);
+    setMessages((prev) => [...prev, { id: nextId(), sender: 'user', text, time: now }]);
     setInput('');
     setIsLoading(true);
 
@@ -61,7 +65,7 @@ const AIAssistantPanel = ({ roleLabel = 'User', patientId = null, patientName = 
       setMessages((prev) => [
         ...prev,
         {
-          id: Date.now() + 1,
+          id: nextId(),
           sender: 'assistant',
           text: result.answer,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -72,7 +76,7 @@ const AIAssistantPanel = ({ roleLabel = 'User', patientId = null, patientName = 
       setMessages((prev) => [
         ...prev,
         {
-          id: Date.now() + 1,
+          id: nextId(),
           sender: 'assistant',
           text: `⚠️ ${err.message || 'An unexpected error occurred.'}`,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -95,7 +99,7 @@ const AIAssistantPanel = ({ roleLabel = 'User', patientId = null, patientName = 
       <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-br from-purple-700/20 to-violet-700/20 p-6">
         <div className="flex items-start gap-4">
           <div className="h-12 w-12 rounded-xl bg-purple-500/20 border border-purple-400/30 text-purple-200 flex items-center justify-center">
-            <BrainIcon />
+            <FontAwesomeIcon icon={faBrain} className="h-6 w-6" aria-hidden="true" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white">AI Assistant</h1>
@@ -190,8 +194,10 @@ const AIAssistantPanel = ({ roleLabel = 'User', patientId = null, patientName = 
               <button
                 onClick={handleSend}
                 disabled={!canSend}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 text-white text-sm font-medium shadow-lg shadow-purple-500/25 hover:shadow-purple-500/35 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Send message"
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-violet-600 text-white text-sm font-medium shadow-lg shadow-purple-500/25 hover:shadow-purple-500/35 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
+                <FontAwesomeIcon icon={faPaperPlane} aria-hidden="true" />
                 Send
               </button>
             </div>

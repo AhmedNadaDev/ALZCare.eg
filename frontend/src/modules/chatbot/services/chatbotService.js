@@ -1,13 +1,27 @@
+import { tokenManager } from '../../shared/api/api';
+
 const API_BASE_URL = 'http://localhost:5001/api';
 
-const DOCTOR_TOKEN_KEY = 'alzcare_doctor_token';
-const FAMILY_TOKEN_KEY = 'alzcare_family_token';
-const PATIENT_TOKEN_KEY = 'alzcare_patient_token';
+/**
+ * Returns the JWT for the currently active role.
+ * Reads the USER_ROLE_KEY written by tokenManager on every login so the
+ * correct token is sent even when multiple role-tokens coexist in localStorage
+ * (e.g. a stale doctor session while a family member is logged in).
+ */
+const getToken = () => {
+  const role = tokenManager.getUserType();
+  if (role === 'doctor')  return tokenManager.getDoctorToken();
+  if (role === 'family')  return tokenManager.getFamilyToken();
+  if (role === 'patient') return tokenManager.getPatientToken();
 
-const getToken = () =>
-  localStorage.getItem(DOCTOR_TOKEN_KEY) ||
-  localStorage.getItem(FAMILY_TOKEN_KEY) ||
-  localStorage.getItem(PATIENT_TOKEN_KEY);
+  // Fallback: return whatever is available (handles legacy sessions)
+  return (
+    tokenManager.getDoctorToken() ||
+    tokenManager.getFamilyToken() ||
+    tokenManager.getPatientToken() ||
+    null
+  );
+};
 
 /**
  * Ask the ALZCare AI assistant.

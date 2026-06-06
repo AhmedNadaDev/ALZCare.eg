@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../shared/auth/AuthContext';
-import { BrainIcon, CheckCircleIcon, HeartIcon } from '../../features/shared/icons';
+import { BrainIcon, CheckCircleIcon, HeartIcon, ActivityIcon } from '../../features/shared/icons';
 import RoleDashboardLayout from '../../features/shared/layouts/RoleDashboardLayout';
 
 const FamilyLayout = () => {
@@ -13,6 +13,7 @@ const FamilyLayout = () => {
     { key: 'dashboard', label: 'Dashboard', icon: BrainIcon, path: '/family/dashboard' },
     { key: 'register', label: 'Register Person', icon: CheckCircleIcon, path: '/family/register-person' },
     { key: 'patient-details', label: 'Patient Details', icon: HeartIcon, path: `/family/patients/${user?.patient?._id || ''}` },
+    { key: 'memory', label: 'Memory Assistant', icon: ActivityIcon, path: '/family/memory' },
     { key: 'assistant', label: 'AI Assistant', icon: BrainIcon, path: '/family/assistant' },
   ];
 
@@ -20,6 +21,8 @@ const FamilyLayout = () => {
     ? 'register'
     : location.pathname.startsWith('/family/patients/')
     ? 'patient-details'
+    : location.pathname.startsWith('/family/memory')
+    ? 'memory'
     : location.pathname.startsWith('/family/assistant')
     ? 'assistant'
     : 'dashboard';

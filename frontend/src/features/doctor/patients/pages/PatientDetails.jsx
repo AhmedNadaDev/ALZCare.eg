@@ -6,6 +6,7 @@ import PatientOverview from '../components/PatientOverview';
 import PatientMedications from '../components/PatientMedications';
 import PatientMood from '../components/PatientMood';
 import PatientNotes from '../components/PatientNotes';
+import DoctorCognitiveInsights from '../components/DoctorCognitiveInsights';
 
 const getLevelColor = (level) => {
   switch (level) {
@@ -16,7 +17,7 @@ const getLevelColor = (level) => {
   }
 };
 
-const TABS = ['overview', 'medications', 'mood', 'notes'];
+const TABS = ['overview', 'medications', 'mood', 'cognitive', 'notes'];
 
 const PatientDetails = () => {
   const { id } = useParams();
@@ -119,6 +120,9 @@ const PatientDetails = () => {
         )}
         {activeTab === 'mood' && (
           <PatientMood moodHistory={moodHistory} moodStats={moodStats} onRefresh={refetch} />
+        )}
+        {activeTab === 'cognitive' && (
+          <DoctorCognitiveInsights patientId={id} />
         )}
         {activeTab === 'notes' && (
           <PatientNotes patient={patient} />

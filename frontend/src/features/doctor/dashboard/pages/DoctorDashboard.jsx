@@ -97,8 +97,8 @@ const DoctorDashboard = () => {
         setLoading(true);
         const [patientsRes, notificationsRes, statsRes, unreadRes] = await Promise.all([
           patientsAPI.getAll(),
-          notificationsAPI.getRecent(10),
-          doctorAuthAPI.getStats(),
+          notificationsAPI.getRecent(10).catch(() => ({ data: [] })),
+          doctorAuthAPI.getStats().catch(() => ({ data: null })),
           notificationsAPI.getUnreadCount().catch(() => ({ data: { count: 0 } })),
         ]);
         setPatients(patientsRes.data || []);

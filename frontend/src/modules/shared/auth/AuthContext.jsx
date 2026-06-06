@@ -49,7 +49,8 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const response = await doctorAuthAPI.signup(data);
-      tokenManager.clearAllTokens();
+      // Set only the doctor token — leave other role tokens untouched so
+      // family/patient sessions in the same browser are not invalidated.
       tokenManager.setDoctorToken(response.data.token);
       setUser(response.data.doctor);
       setUserType('doctor');
@@ -64,7 +65,6 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const response = await doctorAuthAPI.login({ email, password });
-      tokenManager.clearAllTokens();
       tokenManager.setDoctorToken(response.data.token);
       setUser(response.data.doctor);
       setUserType('doctor');
@@ -79,7 +79,6 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const response = await familyAuthAPI.login({ email, password });
-      tokenManager.clearAllTokens();
       tokenManager.setFamilyToken(response.data.token);
       setUser(response.data.family);
       setUserType('family');
@@ -94,7 +93,6 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const response = await patientAuthAPI.login({ email, password });
-      tokenManager.clearAllTokens();
       tokenManager.setPatientToken(response.data.token);
       setUser(response.data.patient);
       setUserType('patient');

@@ -16,30 +16,38 @@ class PatientService {
       throw { status: 400, message: 'A patient with this email already exists' };
     }
 
-    // Generate patient number
-    const count = await Patient.countDocuments();
-    const patientNumber = `ALZ-${String(count + 1).padStart(6, '0')}`;
-
-    // Create patient
-    const patient = await Patient.create({
-      patientNumber,
-      firstName: patientData.firstName,
-      lastName: patientData.lastName,
-      email: normalizedPatientEmail,
-      password: patientData.password,
-      dateOfBirth: patientData.dateOfBirth,
-      age: patientData.age,
-      gender: patientData.gender,
-      alzheimerLevel: patientData.alzheimerLevel,
-      diagnosisDate: patientData.diagnosisDate || new Date(),
-      description: patientData.description,
-      medicalHistory: patientData.medicalHistory,
-      allergies: patientData.allergies || [],
-      emergencyContact: patientData.emergencyContact,
-      profileImage: patientData.profileImage,
-      address: patientData.address,
-      doctor: doctorId
-    });
+    // patientNumber is generated atomically inside the Patient pre-save hook via
+    // Counter.getNextSequence (findOneAndUpdate + $inc). Never set it manually here.
+    let patient;
+    try {
+      patient = await Patient.create({
+        firstName: patientData.firstName,
+        lastName: patientData.lastName,
+        email: normalizedPatientEmail,
+        password: patientData.password,
+        dateOfBirth: patientData.dateOfBirth,
+        age: patientData.age,
+        gender: patientData.gender,
+        alzheimerLevel: patientData.alzheimerLevel,
+        diagnosisDate: patientData.diagnosisDate || new Date(),
+        description: patientData.description,
+        medicalHistory: patientData.medicalHistory,
+        allergies: patientData.allergies || [],
+        emergencyContact: patientData.emergencyContact,
+        profileImage: patientData.profileImage,
+        address: patientData.address,
+        doctor: doctorId
+      });
+    } catch (err) {
+      // Surface duplicate-key errors as readable 409 responses instead of 500s
+      if (err.code === 11000) {
+        const field = Object.keys(err.keyPattern || {})[0] || 'field';
+        const value = err.keyValue ? JSON.stringify(err.keyValue) : '';
+        console.error(`[createPatient] Duplicate key on ${field}: ${value}`, err);
+        throw { status: 409, message: `A patient with that ${field} already exists (${value}).` };
+      }
+      throw err;
+    }
 
     await User.create({
       email: normalizedPatientEmail,
@@ -68,7 +76,7 @@ class PatientService {
       type: 'new_patient',
       priority: 'medium',
       title: 'New Patient Added',
-      message: `Patient ${patient.fullName} (${patientNumber}) has been added to your care.`,
+      message: `Patient ${patient.fullName} (${patient.patientNumber}) has been added to your care.`,
       data: {
         patientId: patient._id,
         patientName: patient.fullName,

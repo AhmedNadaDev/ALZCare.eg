@@ -5,39 +5,61 @@
 
 const API_BASE_URL = 'http://localhost:5001/api';
 
-// Token storage keys (separate from any existing auth)
-const DOCTOR_TOKEN_KEY = 'alzcare_doctor_token';
-const FAMILY_TOKEN_KEY = 'alzcare_family_token';
+// Token storage keys
+const DOCTOR_TOKEN_KEY  = 'alzcare_doctor_token';
+const FAMILY_TOKEN_KEY  = 'alzcare_family_token';
 const PATIENT_TOKEN_KEY = 'alzcare_patient_token';
 
-// API Request helper
-const apiRequest = async (endpoint, options = {}) => {
+/**
+ * Explicit role key — written on every login / token set.
+ * Used by tokenManager helpers and getActiveToken() for generic auth checks.
+ */
+const USER_ROLE_KEY = 'alzcare_user_role';
+
+/**
+ * Returns the active JWT for the currently logged-in role.
+ * Used only for mixed-role API calls (chatbot, etc.).
+ * Role-specific API groups use their dedicated token directly — see below.
+ */
+const getActiveToken = () => {
+  const role = localStorage.getItem(USER_ROLE_KEY);
+  if (role === 'doctor')  return localStorage.getItem(DOCTOR_TOKEN_KEY);
+  if (role === 'family')  return localStorage.getItem(FAMILY_TOKEN_KEY);
+  if (role === 'patient') return localStorage.getItem(PATIENT_TOKEN_KEY);
+
+  // Backwards-compat fallback
+  return (
+    localStorage.getItem(DOCTOR_TOKEN_KEY) ||
+    localStorage.getItem(FAMILY_TOKEN_KEY) ||
+    localStorage.getItem(PATIENT_TOKEN_KEY) ||
+    null
+  );
+};
+
+/**
+ * Core HTTP helper — accepts an explicit token so callers control which
+ * credential is sent.  This prevents cross-role token contamination when
+ * multiple sessions coexist in the same browser (e.g. family dashboard open
+ * alongside patient dashboard in another tab sharing the same localStorage).
+ */
+const makeRequest = async (endpoint, options = {}, token) => {
   const url = `${API_BASE_URL}${endpoint}`;
-  
+
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers,
   };
 
-  // Add authorization header if token exists
-  const token =
-    localStorage.getItem(DOCTOR_TOKEN_KEY) ||
-    localStorage.getItem(FAMILY_TOKEN_KEY) ||
-    localStorage.getItem(PATIENT_TOKEN_KEY);
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const config = {
-    ...options,
-    headers,
-  };
+  const config = { ...options, headers };
 
   if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
     config.body = JSON.stringify(options.body);
   }
 
-  // Handle FormData
   if (options.body instanceof FormData) {
     delete headers['Content-Type'];
     config.body = options.body;
@@ -46,7 +68,6 @@ const apiRequest = async (endpoint, options = {}) => {
   try {
     const response = await fetch(url, config);
 
-    // Check if response is JSON
     const contentType = response.headers.get('content-type');
     let data;
 
@@ -56,7 +77,7 @@ const apiRequest = async (endpoint, options = {}) => {
       const text = await response.text();
       throw {
         status: response.status,
-        message: `Server returned non-JSON response: ${text.substring(0, 100)}`
+        message: `Server returned non-JSON response: ${text.substring(0, 100)}`,
       };
     }
 
@@ -64,131 +85,260 @@ const apiRequest = async (endpoint, options = {}) => {
       throw {
         status: response.status,
         message: data.message || data.error || 'An error occurred',
-        errors: data.errors
+        errors: data.errors,
       };
     }
 
     return data;
   } catch (error) {
-    if (error.status) {
-      throw error;
-    }
+    if (error.status) throw error;
     throw {
       status: 500,
-      message: error.message || 'Network error. Please check your connection.'
+      message: error.message || 'Network error. Please check your connection.',
     };
   }
 };
 
+/**
+ * Role-pinned request helpers.
+ * Each always reads its own dedicated token key regardless of which role
+ * USER_ROLE_KEY currently points to.  This prevents cross-role token
+ * contamination when multiple sessions share the same localStorage.
+ */
+const doctorRequest  = (endpoint, options = {}) =>
+  makeRequest(endpoint, options, localStorage.getItem(DOCTOR_TOKEN_KEY));
+
+const familyRequest  = (endpoint, options = {}) =>
+  makeRequest(endpoint, options, localStorage.getItem(FAMILY_TOKEN_KEY));
+
+const patientRequest = (endpoint, options = {}) =>
+  makeRequest(endpoint, options, localStorage.getItem(PATIENT_TOKEN_KEY));
+
+/**
+ * For endpoints that accept BOTH doctor and family tokens (protectDoctorOrFamily).
+ * Picks doctor token when the active role is doctor, otherwise family token.
+ * Never sends a patient token to these endpoints regardless of USER_ROLE_KEY.
+ */
+const doctorOrFamilyRequest = (endpoint, options = {}) => {
+  const role  = localStorage.getItem(USER_ROLE_KEY);
+  const token = role === 'doctor'
+    ? localStorage.getItem(DOCTOR_TOKEN_KEY)
+    : localStorage.getItem(FAMILY_TOKEN_KEY);
+  return makeRequest(endpoint, options, token);
+};
+
+/** Generic request — reads active role; use for truly shared / public endpoints. */
+const apiRequest = (endpoint, options = {}) =>
+  makeRequest(endpoint, options, getActiveToken());
+
+/**
+ * Multipart request for doctor/family management endpoints (memory media).
+ * Picks the doctor token when the active role is doctor, otherwise family.
+ * Content-Type is dropped by makeRequest when the body is FormData.
+ */
+const dfFormRequest = (endpoint, formData, method = 'POST') => {
+  const role = localStorage.getItem(USER_ROLE_KEY);
+  const token =
+    role === 'doctor'
+      ? localStorage.getItem(DOCTOR_TOKEN_KEY)
+      : localStorage.getItem(FAMILY_TOKEN_KEY);
+  return makeRequest(endpoint, { method, body: formData }, token);
+};
+
 // ===== DOCTOR AUTH API =====
 export const doctorAuthAPI = {
-  signup: (data) => apiRequest('/doctor/auth/signup', { method: 'POST', body: data }),
-  login: (data) => apiRequest('/doctor/auth/login', { method: 'POST', body: data }),
-  getProfile: () => apiRequest('/doctor/auth/profile'),
-  updateProfile: (data) => apiRequest('/doctor/auth/profile', { method: 'PUT', body: data }),
-  changePassword: (data) => apiRequest('/doctor/auth/change-password', { method: 'PUT', body: data }),
-  getStats: () => apiRequest('/doctor/auth/stats'),
-  verify: () => apiRequest('/doctor/auth/verify'),
+  signup: (data) => makeRequest('/doctor/auth/signup', { method: 'POST', body: data }, null), // public
+  login:  (data) => makeRequest('/doctor/auth/login',  { method: 'POST', body: data }, null), // public
+  getProfile:     () => doctorRequest('/doctor/auth/profile'),
+  updateProfile:  (data) => doctorRequest('/doctor/auth/profile', { method: 'PUT', body: data }),
+  changePassword: (data) => doctorRequest('/doctor/auth/change-password', { method: 'PUT', body: data }),
+  getStats:       () => doctorRequest('/doctor/auth/stats'),
+  verify:         () => doctorRequest('/doctor/auth/verify'),
 };
 
 // ===== FAMILY AUTH API =====
 export const familyAuthAPI = {
-  login: (data) => apiRequest('/family/auth/login', { method: 'POST', body: data }),
-  getProfile: () => apiRequest('/family/auth/profile'),
-  updateProfile: (data) => apiRequest('/family/auth/profile', { method: 'PUT', body: data }),
-  changePassword: (data) => apiRequest('/family/auth/change-password', { method: 'PUT', body: data }),
-  verify: () => apiRequest('/family/auth/verify'),
+  login:          (data) => makeRequest('/family/auth/login', { method: 'POST', body: data }, null), // public
+  getProfile:     () => familyRequest('/family/auth/profile'),
+  updateProfile:  (data) => familyRequest('/family/auth/profile', { method: 'PUT', body: data }),
+  changePassword: (data) => familyRequest('/family/auth/change-password', { method: 'PUT', body: data }),
+  verify:         () => familyRequest('/family/auth/verify'),
 };
 
 // ===== PATIENT AUTH API =====
 export const patientAuthAPI = {
-  login: (data) => apiRequest('/auth/login', { method: 'POST', body: { ...data, role: 'patient' } }),
-  getProfile: () => apiRequest('/auth/verify'),
-  verify: () => apiRequest('/auth/verify'),
+  login:      (data) => makeRequest('/auth/login', { method: 'POST', body: { ...data, role: 'patient' } }, null), // public
+  getProfile: () => patientRequest('/auth/verify'),
+  verify:     () => patientRequest('/auth/verify'),
 };
 
 // ===== PATIENTS API =====
 export const patientsAPI = {
   getAll: (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
-    return apiRequest(`/doctor/patients${queryString ? `?${queryString}` : ''}`);
+    return doctorRequest(`/doctor/patients${queryString ? `?${queryString}` : ''}`);
   },
-  getById: (id) => apiRequest(`/doctor/patients/${id}`),
-  create: (data) => {
-    if (data instanceof FormData) {
-      return apiRequest('/doctor/patients', { method: 'POST', body: data });
-    }
-    return apiRequest('/doctor/patients', { method: 'POST', body: data });
-  },
-  update: (id, data) => apiRequest(`/doctor/patients/${id}`, { method: 'PUT', body: data }),
-  delete: (id) => apiRequest(`/doctor/patients/${id}`, { method: 'DELETE' }),
-  updateStatus: (id, status) => apiRequest(`/doctor/patients/${id}/status`, { method: 'PUT', body: { status } }),
-  addNote: (id, content) => apiRequest(`/doctor/patients/${id}/notes`, { method: 'POST', body: { content } }),
-  getNotes: (id) => apiRequest(`/doctor/patients/${id}/notes`),
-  getStats: (id) => apiRequest(`/doctor/patients/${id}/stats`),
-  scheduleAppointment: (id, date) => apiRequest(`/doctor/patients/${id}/appointment`, { method: 'POST', body: { appointmentDate: date } }),
-  getFamily: (patientId) => apiRequest(`/doctor/patients/${patientId}/family`),
+  getById:     (id) => doctorRequest(`/doctor/patients/${id}`),
+  create:      (data) => doctorRequest('/doctor/patients', { method: 'POST', body: data }),
+  update:      (id, data) => doctorRequest(`/doctor/patients/${id}`, { method: 'PUT', body: data }),
+  delete:      (id) => doctorRequest(`/doctor/patients/${id}`, { method: 'DELETE' }),
+  updateStatus: (id, status) => doctorRequest(`/doctor/patients/${id}/status`, { method: 'PUT', body: { status } }),
+  addNote:     (id, content) => doctorRequest(`/doctor/patients/${id}/notes`, { method: 'POST', body: { content } }),
+  getNotes:    (id) => doctorRequest(`/doctor/patients/${id}/notes`),
+  getStats:    (id) => doctorRequest(`/doctor/patients/${id}/stats`),
+  scheduleAppointment: (id, date) =>
+    doctorRequest(`/doctor/patients/${id}/appointment`, { method: 'POST', body: { appointmentDate: date } }),
+  getFamily: (patientId) => doctorRequest(`/doctor/patients/${patientId}/family`),
 };
 
 // ===== MEDICATIONS API =====
+// Write routes are doctor-only; read routes accept doctor OR family (protectDoctorOrFamily).
 export const medicationsAPI = {
-  create: (data) => apiRequest('/medications', { method: 'POST', body: data }),
-  getByPatient: (patientId, includeInactive = false) => 
-    apiRequest(`/medications/patient/${patientId}?includeInactive=${includeInactive}`),
-  getById: (id) => apiRequest(`/medications/${id}`),
-  update: (id, data) => apiRequest(`/medications/${id}`, { method: 'PUT', body: data }),
-  delete: (id) => apiRequest(`/medications/${id}`, { method: 'DELETE' }),
-  discontinue: (id) => apiRequest(`/medications/${id}/discontinue`, { method: 'PUT' }),
-  log: (id, data) => apiRequest(`/medications/${id}/log`, { method: 'POST', body: data }),
-  getTodaySchedule: (patientId) => apiRequest(`/medications/patient/${patientId}/today`),
-  getAdherence: (patientId, days = 30) => apiRequest(`/medications/patient/${patientId}/adherence?days=${days}`),
+  create:      (data) => doctorRequest('/medications', { method: 'POST', body: data }),
+  update:      (id, data) => doctorRequest(`/medications/${id}`, { method: 'PUT', body: data }),
+  delete:      (id) => doctorRequest(`/medications/${id}`, { method: 'DELETE' }),
+  discontinue: (id) => doctorRequest(`/medications/${id}/discontinue`, { method: 'PUT' }),
+
+  // Read + log — accessible by doctor AND family
+  getByPatient: (patientId, includeInactive = false) =>
+    doctorOrFamilyRequest(`/medications/patient/${patientId}?includeInactive=${includeInactive}`),
+  getById:          (id) => doctorOrFamilyRequest(`/medications/${id}`),
+  log:              (id, data) => doctorOrFamilyRequest(`/medications/${id}/log`, { method: 'POST', body: data }),
+  getTodaySchedule: (patientId) => doctorOrFamilyRequest(`/medications/patient/${patientId}/today`),
+  getAdherence:     (patientId, days = 30) =>
+    doctorOrFamilyRequest(`/medications/patient/${patientId}/adherence?days=${days}`),
 };
 
 // ===== MOODS API =====
+// All mood routes use protectDoctorOrFamily — both roles can access.
 export const moodsAPI = {
-  create: (data) => apiRequest('/moods', { method: 'POST', body: data }),
+  create: (data) => doctorOrFamilyRequest('/moods', { method: 'POST', body: data }),
   getByPatient: (patientId, options = {}) => {
     const params = new URLSearchParams(options).toString();
-    return apiRequest(`/moods/patient/${patientId}${params ? `?${params}` : ''}`);
+    return doctorOrFamilyRequest(`/moods/patient/${patientId}${params ? `?${params}` : ''}`);
   },
-  getById: (id) => apiRequest(`/moods/${id}`),
-  update: (id, data) => apiRequest(`/moods/${id}`, { method: 'PUT', body: data }),
-  delete: (id) => apiRequest(`/moods/${id}`, { method: 'DELETE' }),
-  getStats: (patientId, days = 30) => apiRequest(`/moods/patient/${patientId}/stats?days=${days}`),
-  getAbnormal: (patientId, days = 30) => apiRequest(`/moods/patient/${patientId}/abnormal?days=${days}`),
+  getById:     (id) => doctorOrFamilyRequest(`/moods/${id}`),
+  update:      (id, data) => doctorOrFamilyRequest(`/moods/${id}`, { method: 'PUT', body: data }),
+  delete:      (id) => doctorOrFamilyRequest(`/moods/${id}`, { method: 'DELETE' }),
+  getStats:    (patientId, days = 30) => doctorOrFamilyRequest(`/moods/patient/${patientId}/stats?days=${days}`),
+  getAbnormal: (patientId, days = 30) =>
+    doctorOrFamilyRequest(`/moods/patient/${patientId}/abnormal?days=${days}`),
 };
 
 // ===== FAMILY MEDICATIONS API =====
 export const familyMedicationsAPI = {
-  add: (data) => apiRequest('/family/medications', { method: 'POST', body: data }),
-  delete: (id) => apiRequest(`/family/medications/${id}`, { method: 'DELETE' }),
+  add:    (data) => familyRequest('/family/medications', { method: 'POST', body: data }),
+  delete: (id)   => familyRequest(`/family/medications/${id}`, { method: 'DELETE' }),
 };
 
 // ===== NOTIFICATIONS API =====
+// All notification routes use protectDoctorOrFamily on the backend,
+// so we must send whichever token the active role has (doctor OR family).
 export const notificationsAPI = {
   getAll: (options = {}) => {
     const params = new URLSearchParams(options).toString();
-    return apiRequest(`/notifications${params ? `?${params}` : ''}`);
+    return doctorOrFamilyRequest(`/notifications${params ? `?${params}` : ''}`);
   },
-  getUnreadCount: () => apiRequest('/notifications/unread-count'),
-  getRecent: (limit = 5) => apiRequest(`/notifications/recent?limit=${limit}`),
-  getStats: () => apiRequest('/notifications/stats'),
-  markAsRead: (id) => apiRequest(`/notifications/${id}/read`, { method: 'PUT' }),
-  markAllAsRead: () => apiRequest('/notifications/read-all', { method: 'PUT' }),
-  archive: (id) => apiRequest(`/notifications/${id}/archive`, { method: 'PUT' }),
-  delete: (id) => apiRequest(`/notifications/${id}`, { method: 'DELETE' }),
+  getUnreadCount: () => doctorOrFamilyRequest('/notifications/unread-count'),
+  getRecent:      (limit = 5) => doctorOrFamilyRequest(`/notifications/recent?limit=${limit}`),
+  getStats:       () => doctorOrFamilyRequest('/notifications/stats'),
+  markAsRead:     (id) => doctorOrFamilyRequest(`/notifications/${id}/read`, { method: 'PUT' }),
+  markAllAsRead:  () => doctorOrFamilyRequest('/notifications/read-all', { method: 'PUT' }),
+  archive:        (id) => doctorOrFamilyRequest(`/notifications/${id}/archive`, { method: 'PUT' }),
+  delete:         (id) => doctorOrFamilyRequest(`/notifications/${id}`, { method: 'DELETE' }),
 };
 
 // ===== FACE RECOGNITION API =====
 export const faceRecognitionAPI = {
-  register: (formData) => apiRequest('/family/face-recognition/register', { method: 'POST', body: formData }),
-  recognize: (image) => apiRequest('/family/face-recognition/recognize', { method: 'POST', body: { image } }),
-  recognizePublic: (image, patientId) => apiRequest('/face-recognition/patient/recognize', { method: 'POST', body: { image, patientId } }),
-  getPersons: () => apiRequest('/family/face-recognition/persons'),
+  register:  (formData) =>
+    familyRequest('/family/face-recognition/register', { method: 'POST', body: formData }),
+  recognize: (image) =>
+    familyRequest('/family/face-recognition/recognize', { method: 'POST', body: { image } }),
+  recognizePublic: (image, patientId) =>
+    makeRequest('/face-recognition/patient/recognize', { method: 'POST', body: { image, patientId } }, null), // public
+  getPersons: () => familyRequest('/family/face-recognition/persons'),
+};
+
+// ===== DAILY PLAN API =====
+export const dailyPlanAPI = {
+  /** Family: create or replace a full day plan */
+  upsert: (data) => familyRequest('/family/daily-plan', { method: 'POST', body: data }),
+
+  /** Family: append events to a day plan */
+  addEvents: (data) => familyRequest('/family/daily-plan/events', { method: 'POST', body: data }),
+
+  /** Get today's plan for a patient (called by both patient & family dashboards) */
+  getToday:  (patientId) => apiRequest(`/patient/${patientId}/daily-plan/today`),
+
+  /** Get plan for specific date */
+  getByDate: (patientId, date) => apiRequest(`/patient/${patientId}/daily-plan?date=${date}`),
+
+  /** Patient voice response — sent with patient token */
+  respondToEvent: (planId, eventId, responseText, patientId) =>
+    patientRequest(`/daily-plan/${planId}/event/${eventId}/respond`, {
+      method: 'POST',
+      body: { responseText, patientId }
+    }),
+
+  /** Manual confirm — family action */
+  manualConfirm: (planId, eventId, status) =>
+    familyRequest(`/family/daily-plan/${planId}/event/${eventId}/manual`, {
+      method: 'PUT',
+      body: { status }
+    }),
+
+  /** Update event — family action */
+  updateEvent: (planId, eventId, data) =>
+    familyRequest(`/family/daily-plan/${planId}/event/${eventId}`, { method: 'PUT', body: data }),
+
+  /** Delete event — family action */
+  deleteEvent: (planId, eventId) =>
+    familyRequest(`/family/daily-plan/${planId}/event/${eventId}`, { method: 'DELETE' }),
+};
+
+// ===== AI MOOD CHECK-IN API =====
+export const aiMoodAPI = {
+  /**
+   * Family/Doctor: create or update a daily mood check-in schedule for a patient.
+   * Body: { patientId, scheduledTime: "HH:MM", isActive? }
+   */
+  setSchedule: (data) =>
+    doctorOrFamilyRequest('/mood-checkin/schedule', { method: 'POST', body: data }),
+
+  /** Family/Doctor: read the current schedule for a patient */
+  getSchedule: (patientId) =>
+    doctorOrFamilyRequest(`/mood-checkin/schedule/${patientId}`),
+
+  /** Family/Doctor: paginated AI mood history */
+  getHistory: (patientId, { days = 30, limit = 50 } = {}) =>
+    doctorOrFamilyRequest(`/mood-checkin/history/${patientId}?days=${days}&limit=${limit}`),
+
+  /**
+   * Latest single AI mood result.
+   * Uses apiRequest (active-role token) so it works for doctor, family AND patient.
+   */
+  getLatest: (patientId) =>
+    apiRequest(`/mood-checkin/latest/${patientId}`),
+
+  /** Family/Doctor: emotion frequency breakdown */
+  getStats: (patientId, days = 30) =>
+    doctorOrFamilyRequest(`/mood-checkin/stats/${patientId}?days=${days}`),
+
+  /**
+   * Patient: upload recorded audio blob for emotion analysis.
+   * Uses patient token + FormData (Content-Type header removed by makeRequest).
+   */
+  analyzeAudio: (formData) =>
+    makeRequest(
+      '/mood-checkin/analyze',
+      { method: 'POST', body: formData },
+      localStorage.getItem(PATIENT_TOKEN_KEY)
+    ),
 };
 
 // ===== CHATBOT API =====
 export const chatbotAPI = {
+  // Chatbot is accessible to all roles — use generic token selection
   ask: (question, patientId = null) => {
     const body = { question };
     if (patientId) body.patient_id = patientId;
@@ -196,33 +346,144 @@ export const chatbotAPI = {
   },
 };
 
+// ===== LOCATION & SAFETY ZONE API =====
+export const locationAPI = {
+  sendPatientLocation: (data) =>
+    patientRequest('/patient/location', { method: 'POST', body: data }),
+  getPatientLocation: (patientId) =>
+    familyRequest(`/family/location/${patientId}`),
+  saveSafetyZone: (data) =>
+    familyRequest('/family/safety-zone', { method: 'POST', body: data }),
+  getSafetyZone: (patientId) =>
+    familyRequest(`/family/safety-zone/${patientId}`),
+};
+
+// ===== COGNITIVE / MEMORY ASSISTANT API =====
+// Backend routes use protectDoctorOrFamily (accepts doctor, family AND patient).
+// Management calls go through doctor/family tokens; the patient experience
+// (session play) uses the active token (patient when on the patient device).
+export const cognitiveAPI = {
+  // ── Exercise template catalogue ──
+  getTemplates: () => apiRequest('/cognitive/exercise-templates'),
+
+  // ── Memory albums & items (family/doctor manage) ──
+  listAlbums: (patientId, includeInactive = false) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/albums?includeInactive=${includeInactive}`),
+  getAlbum: (albumId) => apiRequest(`/cognitive/albums/${albumId}`),
+  createAlbum: (patientId, formData) =>
+    dfFormRequest(`/cognitive/patients/${patientId}/albums`, formData, 'POST'),
+  updateAlbum: (albumId, formData) => dfFormRequest(`/cognitive/albums/${albumId}`, formData, 'PUT'),
+  deleteAlbum: (albumId) => doctorOrFamilyRequest(`/cognitive/albums/${albumId}`, { method: 'DELETE' }),
+  addItem: (albumId, formData) => dfFormRequest(`/cognitive/albums/${albumId}/items`, formData, 'POST'),
+  updateItem: (itemId, formData) => dfFormRequest(`/cognitive/items/${itemId}`, formData, 'PUT'),
+  deleteItem: (itemId) => doctorOrFamilyRequest(`/cognitive/items/${itemId}`, { method: 'DELETE' }),
+  reorderItems: (albumId, order) =>
+    doctorOrFamilyRequest(`/cognitive/albums/${albumId}/reorder`, { method: 'PUT', body: { order } }),
+  logAlbumView: (albumId) => apiRequest(`/cognitive/albums/${albumId}/view`, { method: 'POST' }),
+
+  // ── Assignments (PatientAssignments) ──
+  listAssignments: (patientId, kind) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/assignments${kind ? `?kind=${kind}` : ''}`),
+  assignExercise: (patientId, data) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/assignments/exercise`, { method: 'POST', body: data }),
+  assignAlbum: (patientId, data) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/assignments/album`, { method: 'POST', body: data }),
+  updateAssignment: (assignmentId, data) =>
+    doctorOrFamilyRequest(`/cognitive/assignments/${assignmentId}`, { method: 'PUT', body: data }),
+  setAssignmentEnabled: (assignmentId, enabled) =>
+    doctorOrFamilyRequest(`/cognitive/assignments/${assignmentId}/enabled`, { method: 'PUT', body: { enabled } }),
+  deleteAssignment: (assignmentId) =>
+    doctorOrFamilyRequest(`/cognitive/assignments/${assignmentId}`, { method: 'DELETE' }),
+
+  // ── Schedules ──
+  listSchedules: (patientId) => doctorOrFamilyRequest(`/cognitive/patients/${patientId}/schedules`),
+  createSchedule: (patientId, data) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/schedules`, { method: 'POST', body: data }),
+  updateSchedule: (scheduleId, data) =>
+    doctorOrFamilyRequest(`/cognitive/schedules/${scheduleId}`, { method: 'PUT', body: data }),
+  setScheduleActive: (scheduleId, isActive) =>
+    doctorOrFamilyRequest(`/cognitive/schedules/${scheduleId}/active`, { method: 'PUT', body: { isActive } }),
+  deleteSchedule: (scheduleId) =>
+    doctorOrFamilyRequest(`/cognitive/schedules/${scheduleId}`, { method: 'DELETE' }),
+
+  // ── Patient experience (patient-pinned) ──
+  getActivities: (patientId) => patientRequest(`/cognitive/patients/${patientId}/assignments`),
+
+  // ── Sessions (patient plays; active token) ──
+  startSession: (assignmentId) =>
+    apiRequest('/cognitive/sessions/start', { method: 'POST', body: { assignmentId } }),
+  startExisting: (sessionId) => apiRequest(`/cognitive/sessions/${sessionId}/start`, { method: 'POST' }),
+  recordInteraction: (sessionId, interaction) =>
+    apiRequest(`/cognitive/sessions/${sessionId}/interactions`, { method: 'POST', body: { interaction } }),
+  completeSession: (sessionId, interactions) =>
+    apiRequest(`/cognitive/sessions/${sessionId}/complete`, { method: 'POST', body: { interactions } }),
+  abandonSession: (sessionId) => apiRequest(`/cognitive/sessions/${sessionId}/abandon`, { method: 'POST' }),
+  getSession: (sessionId) => apiRequest(`/cognitive/sessions/${sessionId}`),
+  getDueSessions: (patientId) => apiRequest(`/cognitive/patients/${patientId}/sessions/due`),
+  getSessionHistory: (patientId, opts = {}) => {
+    const qs = new URLSearchParams(opts).toString();
+    return doctorOrFamilyRequest(`/cognitive/patients/${patientId}/sessions${qs ? `?${qs}` : ''}`);
+  },
+
+  // ── Analytics ──
+  getAnalytics: (patientId, days = 30) =>
+    doctorOrFamilyRequest(`/cognitive/patients/${patientId}/analytics?days=${days}`),
+};
+
 // ===== TOKEN MANAGEMENT =====
 export const tokenManager = {
-  setDoctorToken: (token) => localStorage.setItem(DOCTOR_TOKEN_KEY, token),
-  setFamilyToken: (token) => localStorage.setItem(FAMILY_TOKEN_KEY, token),
-  setPatientToken: (token) => localStorage.setItem(PATIENT_TOKEN_KEY, token),
-  getDoctorToken: () => localStorage.getItem(DOCTOR_TOKEN_KEY),
-  getFamilyToken: () => localStorage.getItem(FAMILY_TOKEN_KEY),
+  /**
+   * Each setter writes the USER_ROLE_KEY so apiRequest always knows
+   * which role is currently active and picks the correct token.
+   */
+  setDoctorToken: (token) => {
+    localStorage.setItem(USER_ROLE_KEY, 'doctor');
+    localStorage.setItem(DOCTOR_TOKEN_KEY, token);
+  },
+  setFamilyToken: (token) => {
+    localStorage.setItem(USER_ROLE_KEY, 'family');
+    localStorage.setItem(FAMILY_TOKEN_KEY, token);
+  },
+  setPatientToken: (token) => {
+    localStorage.setItem(USER_ROLE_KEY, 'patient');
+    localStorage.setItem(PATIENT_TOKEN_KEY, token);
+  },
+
+  getDoctorToken:  () => localStorage.getItem(DOCTOR_TOKEN_KEY),
+  getFamilyToken:  () => localStorage.getItem(FAMILY_TOKEN_KEY),
   getPatientToken: () => localStorage.getItem(PATIENT_TOKEN_KEY),
-  clearDoctorToken: () => localStorage.removeItem(DOCTOR_TOKEN_KEY),
-  clearFamilyToken: () => localStorage.removeItem(FAMILY_TOKEN_KEY),
+
+  clearDoctorToken:  () => localStorage.removeItem(DOCTOR_TOKEN_KEY),
+  clearFamilyToken:  () => localStorage.removeItem(FAMILY_TOKEN_KEY),
   clearPatientToken: () => localStorage.removeItem(PATIENT_TOKEN_KEY),
+
+  /** Remove all tokens AND the role marker on logout. */
   clearAllTokens: () => {
+    localStorage.removeItem(USER_ROLE_KEY);
     localStorage.removeItem(DOCTOR_TOKEN_KEY);
     localStorage.removeItem(FAMILY_TOKEN_KEY);
     localStorage.removeItem(PATIENT_TOKEN_KEY);
   },
+
   isAuthenticated: () => !!(
     localStorage.getItem(DOCTOR_TOKEN_KEY) ||
     localStorage.getItem(FAMILY_TOKEN_KEY) ||
     localStorage.getItem(PATIENT_TOKEN_KEY)
   ),
+
+  /**
+   * Returns the active role — reads USER_ROLE_KEY first (explicit, written
+   * on every login).  Falls back to token presence for old sessions.
+   */
   getUserType: () => {
-    if (localStorage.getItem(DOCTOR_TOKEN_KEY)) return 'doctor';
-    if (localStorage.getItem(FAMILY_TOKEN_KEY)) return 'family';
+    const role = localStorage.getItem(USER_ROLE_KEY);
+    if (role === 'doctor' || role === 'family' || role === 'patient') return role;
+    // Fallback for sessions predating this fix
+    if (localStorage.getItem(DOCTOR_TOKEN_KEY))  return 'doctor';
+    if (localStorage.getItem(FAMILY_TOKEN_KEY))  return 'family';
     if (localStorage.getItem(PATIENT_TOKEN_KEY)) return 'patient';
     return null;
-  }
+  },
 };
 
 export default {
@@ -233,7 +494,11 @@ export default {
   medicationsAPI,
   familyMedicationsAPI,
   moodsAPI,
+  aiMoodAPI,
   notificationsAPI,
   faceRecognitionAPI,
+  locationAPI,
+  dailyPlanAPI,
+  cognitiveAPI,
   tokenManager,
 };

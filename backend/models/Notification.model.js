@@ -28,7 +28,8 @@ const notificationSchema = new mongoose.Schema({
       'patient_update',
       'system_alert',
       'new_patient',
-      'family_activity'
+      'family_activity',
+      'zone_alert'
     ],
     required: [true, 'Notification type is required']
   },

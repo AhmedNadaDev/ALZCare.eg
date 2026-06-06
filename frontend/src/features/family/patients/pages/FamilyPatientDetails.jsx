@@ -6,6 +6,8 @@ import useFamilyPatientData from '../hooks/useFamilyPatientData';
 import PatientOverview from '../components/PatientOverview';
 import PatientMedications from '../components/PatientMedications';
 import PatientMood from '../components/PatientMood';
+import LocationTab from '../../../location/components/LocationTab';
+import DailyPlan from '../components/DailyPlan';
 
 const getLevelColor = (level) => {
   switch (level) {
@@ -16,7 +18,7 @@ const getLevelColor = (level) => {
   }
 };
 
-const TABS = ['overview', 'medications', 'mood'];
+const TABS = ['overview', 'medications', 'daily plan', 'mood', 'location'];
 
 const FamilyPatientDetails = () => {
   const { id } = useParams();
@@ -25,7 +27,7 @@ const FamilyPatientDetails = () => {
   const [patient, setPatient] = useState(user?.patient || null);
   const [activeTab, setActiveTab] = useState('overview');
   const [currentLocation, setCurrentLocation] = useState(null);
-  const { medications, moodHistory, moodStats, loading, fetchData } = useFamilyPatientData();
+  const { medications, loading, fetchData } = useFamilyPatientData();
 
   useEffect(() => {
     if (user?.patient) {
@@ -137,7 +139,7 @@ const FamilyPatientDetails = () => {
 
         {/* Tab Content */}
         {activeTab === 'overview' && (
-          <PatientOverview patient={patient} medications={medications} moodStats={moodStats} />
+          <PatientOverview patient={patient} medications={medications} moodStats={null} />
         )}
         {activeTab === 'medications' && (
           <PatientMedications
@@ -147,13 +149,18 @@ const FamilyPatientDetails = () => {
           />
         )}
         {activeTab === 'mood' && (
-          <PatientMood
-            moodHistory={moodHistory}
-            moodStats={moodStats}
+          <PatientMood patientId={patient._id} />
+        )}
+        {activeTab === 'daily plan' && (
+          <DailyPlan
             patientId={patient._id}
-            currentLocation={currentLocation}
-            onRefresh={handleRefresh}
-            patientFirstName={patient?.firstName}
+            patientName={patient?.firstName}
+          />
+        )}
+        {activeTab === 'location' && (
+          <LocationTab
+            patientId={patient._id}
+            patientName={patient?.firstName}
           />
         )}
       </div>
