@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "model_name": "microsoft/wavlm-base-plus",
+  "label2id": {
+    "Calm": 0,
+    "Neutral": 1,
+    "Content": 2,
+    "Anxious": 3,
+    "Agitated": 4,
+    "Low": 5
+  },
+  "id2label": {
+    "0": "Calm",
+    "1": "Neutral",
+    "2": "Content",
+    "3": "Anxious",
+    "4": "Agitated",
+    "5": "Low"
+  },
+  "mood_states": [
+    "Calm",
+    "Neutral",
+    "Content",
+    "Anxious",
+    "Agitated",
+    "Low"
+  ],
+  "mood_arousal": {
+    "Calm": "low",
+    "Neutral": "low",
+    "Low": "low",
+    "Content": "high",
+    "Anxious": "high",
+    "Agitated": "high"
+  },
+  "arousal2id": {
+    "low": 0,
+    "high": 1
+  },
+  "emotion_to_mood": {
+    "neutral": "Neutral",
+    "calm": "Calm",
+    "happy": "Content",
+    "sad": "Low",
+    "angry": "Agitated",
+    "disgust": "Agitated",
+    "fearful": "Anxious",
+    "surprised": null
+  },
+  "sample_rate": 16000,
+  "max_duration_sec": 6.0,
+  "max_samples": 96000,
+  "temperature": 1.0321611166000366,
+  "tta_views": 5,
+  "dropout": 0.1,
+  "num_arousal": 2,
+  "holdout_corpus": "",
+  "merge_calm_into_neutral": false,
+  "smoke_test_mode": false,
+  "architecture": "MultiTaskMoodModel(WavLM + attentive-pool + mood&arousal heads)"
+}

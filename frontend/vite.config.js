@@ -14,15 +14,17 @@ export default defineConfig({
     minify: 'terser',
     
     // Terser options for better compression
+    // NOTE: drop_console is intentionally OFF so debug logs are visible
+    // during ngrok/mobile testing. Re-enable for the final production build.
     terserOptions: {
       compress: {
-        drop_console: true,  // Remove console.log in production
-        drop_debugger: true, // Remove debugger statements
-        pure_funcs: ['console.log', 'console.info'],
+        drop_console: false,
+        drop_debugger: true,
+        pure_funcs: [],
       },
       mangle: true,
       format: {
-        comments: false, // Remove comments
+        comments: false,
       },
     },
     
@@ -69,6 +71,7 @@ export default defineConfig({
     open: true,
     cors: true,
     strictPort: false,  // If port is taken, try the next available
+    allowedHosts: 'all',
   },
   
   // Preview server (for testing production build)

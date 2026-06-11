@@ -23,6 +23,10 @@ export const getSocket = () => {
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
+      // Bypass the ngrok browser-warning page for polling HTTP requests.
+      extraHeaders: {
+        'ngrok-skip-browser-warning': 'true',
+      },
     });
 
     _socket.on('connect', () => {

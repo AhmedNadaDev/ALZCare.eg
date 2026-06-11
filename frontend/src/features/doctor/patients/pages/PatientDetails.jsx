@@ -63,7 +63,7 @@ const PatientDetails = () => {
           <div className="flex flex-col md:flex-row md:items-center gap-6">
             {patient.profileImage ? (
               <img
-                src={`http://localhost:5001${patient.profileImage}`}
+                src={`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}${patient.profileImage}`}
                 alt={patient.fullName}
                 className="h-24 w-24 rounded-full object-cover"
               />

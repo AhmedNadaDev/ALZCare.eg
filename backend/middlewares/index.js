@@ -8,7 +8,6 @@ export {
   validatePatientCreate,
   validatePatientUpdate,
   validateMedicationCreate,
-  validateMoodCreate,
   validateMongoId
 } from './validation.middleware.js';
 export { uploadSingleImage, uploadMultipleImages, getFileUrl, deleteFile } from './upload.middleware.js';

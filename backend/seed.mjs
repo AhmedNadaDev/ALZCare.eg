@@ -39,7 +39,7 @@ const { default: Patient }  = await import('./models/Patient.model.js');
 const { default: Family }   = await import('./models/Family.model.js');
 const { default: Counter }  = await import('./models/Counter.model.js');
 const { default: Medication } = await import('./models/Medication.model.js');
-const { default: Mood }     = await import('./models/Mood.model.js');
+const { default: AIMood }   = await import('./modules/aiMood/AIMood.model.js');
 const { default: Notification } = await import('./models/Notification.model.js');
 const { default: PatientLocation } = await import('./modules/location/location.model.js');
 const { default: SafetyZone }      = await import('./modules/safetyZone/safetyZone.model.js');
@@ -538,69 +538,59 @@ async function seedMedications(patientRecords) {
 // ─────────────────────────────────────────────────────────────
 // Moods
 // ─────────────────────────────────────────────────────────────
-const MOOD_OPTIONS = ['very_happy', 'happy', 'neutral', 'sad', 'very_sad', 'anxious', 'confused', 'agitated', 'calm', 'sleepy'];
-const MOOD_SCORES = { very_happy: [8,10], happy: [7,9], neutral: [5,7], sad: [3,5], very_sad: [1,3], anxious: [2,5], confused: [2,4], agitated: [1,3], calm: [6,9], sleepy: [4,7] };
-const ENERGY_LEVELS = ['very_low', 'low', 'moderate', 'high', 'very_high'];
-const SLEEP_QUALITY = ['poor', 'fair', 'good', 'excellent'];
-const BEHAVIORS = ['wandering', 'repetitive_questions', 'sundowning', 'aggression', 'withdrawal', 'restlessness', 'none'];
-const PHYSICAL_SYMPTOMS = ['headache', 'fatigue', 'pain', 'nausea', 'dizziness', 'tremors', 'none'];
+// AI voice-mood taxonomy (matches the WavLM model / AIMood schema).
+const MOOD_OPTIONS = ['Calm', 'Neutral', 'Content', 'Anxious', 'Agitated', 'Low'];
+const MOOD_AROUSAL = { Calm: 'low', Neutral: 'low', Low: 'low', Content: 'high', Anxious: 'high', Agitated: 'high' };
+const SLOT_TIMES = ['09:00', '13:00', '20:00'];
 
-function moodScoreForLevel(mood) {
-  const [lo, hi] = MOOD_SCORES[mood];
-  return rnd(lo, hi);
+function makeScores(top, conf, options) {
+  // Build a plausible probability vector that peaks at `top` and sums to ~1.
+  const rest = (1 - conf) / (options.length - 1);
+  const scores = {};
+  options.forEach((m) => { scores[m] = m === top ? conf : +(rest * (0.5 + Math.random())).toFixed(4); });
+  return scores;
 }
 
-async function seedMoods(patientRecords, familyMap) {
-  section('Mood Entries');
+async function seedMoods(patientRecords) {
+  section('AI Mood Check-ins');
   let total = 0;
 
-  for (const { patient, doctor } of patientRecords) {
-    const family = familyMap[patient._id.toString()];
+  for (const { patient } of patientRecords) {
     const daysBack = 90;
 
     for (let d = daysBack; d >= 0; d--) {
-      if (Math.random() > 0.65) continue; // ~35% days have mood entry
+      if (Math.random() > 0.65) continue; // ~35% of days have a check-in
       const recordedAt = daysAgo(d);
       recordedAt.setHours(rnd(8, 20), rnd(0, 59), 0, 0);
 
-      const mood = pick(MOOD_OPTIONS);
-      // Skew mood based on alzheimer level
-      const moodOverride = patient.alzheimerLevel === 'late' ? pick(['confused', 'agitated', 'anxious', 'sad', mood]) : mood;
-      const moodScore = moodScoreForLevel(moodOverride);
-      const useFamily = family && Math.random() > 0.3;
-      const recorder = useFamily ? family : doctor;
-      const recorderModel = useFamily ? 'Family' : 'Doctor';
+      let mood = pick(MOOD_OPTIONS);
+      // Skew toward concerning moods for later-stage patients.
+      if (patient.alzheimerLevel === 'late') mood = pick(['Anxious', 'Agitated', 'Low', mood]);
+      const moodConfidence = +(0.55 + Math.random() * 0.4).toFixed(4);
+      const arousal = MOOD_AROUSAL[mood];
+      const arousalConfidence = +(0.6 + Math.random() * 0.35).toFixed(4);
 
-      const behaviors = Math.random() > 0.6 ? [pick(BEHAVIORS)] : ['none'];
-      const entry = new Mood({
-        patient: patient._id,
-        recordedBy: recorder._id,
-        recordedByModel: recorderModel,
-        mood: moodOverride,
-        moodScore,
-        energy: pick(ENERGY_LEVELS),
-        sleep: {
-          quality: pick(SLEEP_QUALITY),
-          hours: rnd(4, 9),
-          disturbances: Math.random() > 0.6,
-        },
-        appetite: pick(['poor', 'reduced', 'normal', 'increased']),
-        cognitiveState: {
-          clarity: pick(['confused', 'somewhat_confused', 'mostly_clear', 'clear']),
-          recognition: pick(['none', 'some', 'most', 'all']),
-          communication: pick(['nonverbal', 'limited', 'moderate', 'good']),
-        },
-        physicalSymptoms: Math.random() > 0.5 ? [pick(PHYSICAL_SYMPTOMS)] : ['none'],
-        behaviors,
+      const entry = new AIMood({
+        patientId: patient._id,
+        mood,
+        moodConfidence,
+        moodScores: makeScores(mood, moodConfidence, MOOD_OPTIONS),
+        topk: [{ mood, prob: moodConfidence }],
+        arousal,
+        arousalConfidence,
+        arousalScores: { [arousal]: arousalConfidence, [arousal === 'low' ? 'high' : 'low']: +(1 - arousalConfidence).toFixed(4) },
+        arousalFromMood: arousal,
+        scheduledTime: pick(SLOT_TIMES),
+        source: 'voice_ai_checkin',
         recordedAt,
-        notes: Math.random() > 0.7 ? `Patient appeared ${moodOverride} during the observation.` : undefined,
+        triggeredAt: recordedAt,
       });
       await entry.save();
       total++;
     }
-    log(`  Mood entries for ${patient.firstName}: done`);
+    log(`  AI mood check-ins for ${patient.firstName}: done`);
   }
-  log(`  Total mood entries: ${total}`);
+  log(`  Total AI mood check-ins: ${total}`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1111,8 +1101,7 @@ async function seedNotifications(patientRecords, medMap, familyMap, doctors) {
     { type: 'medication_reminder', priority: 'high', title: 'Medication Reminder', message: (p, m) => `Time to give ${p.firstName} their ${m.name}`, recipientModel: 'Family' },
     { type: 'medication_missed', priority: 'urgent', title: 'Missed Medication Alert', message: (p, m) => `${p.firstName} missed their ${m.name} dose`, recipientModel: 'Family' },
     { type: 'medication_taken', priority: 'low', title: 'Medication Confirmed', message: (p, m) => `${p.firstName} has taken their ${m.name}`, recipientModel: 'Doctor' },
-    { type: 'mood_abnormal', priority: 'high', title: 'Abnormal Mood Detected', message: (p) => `${p.firstName} is showing signs of confusion and agitation today`, recipientModel: 'Family' },
-    { type: 'mood_entry', priority: 'low', title: 'Mood Entry Added', message: (p) => `New mood entry added for ${p.firstName}`, recipientModel: 'Doctor' },
+    { type: 'mood_abnormal', priority: 'high', title: 'Concerning Mood Detected', message: (p) => `AI voice check-in flagged ${p.firstName} with a concerning mood today`, recipientModel: 'Family' },
     { type: 'patient_update', priority: 'medium', title: 'Patient Status Update', message: (p) => `${p.firstName}'s condition has been updated by the care team`, recipientModel: 'Family' },
     { type: 'system_alert', priority: 'medium', title: 'System Notification', message: (p) => `New appointment scheduled for ${p.firstName}`, recipientModel: 'Family' },
     { type: 'zone_alert', priority: 'urgent', title: 'Safety Zone Alert', message: (p) => `${p.firstName} has left the designated safety zone!`, recipientModel: 'Family' },
@@ -1166,7 +1155,7 @@ async function printReport() {
     patients: await Patient.countDocuments(),
     families: await Family.countDocuments(),
     medications: await Medication.countDocuments(),
-    moodEntries: await Mood.countDocuments(),
+    aiMoodCheckins: await AIMood.countDocuments(),
     dailyPlans: await DailyPlan.countDocuments(),
     notifications: await Notification.countDocuments(),
     patientLocations: await PatientLocation.countDocuments(),
@@ -1234,7 +1223,7 @@ async function main() {
     const patientRecs   = await seedPatients(doctors);
     const familyMap     = await seedFamilies(patientRecs);
     const medMap        = await seedMedications(patientRecs);
-    await seedMoods(patientRecs, familyMap);
+    await seedMoods(patientRecs);
     await seedDailyPlans(patientRecs, medMap, familyMap);
     await seedLocations(patientRecs, familyMap);
     const albumMap      = await seedMemoryAlbums(patientRecs, familyMap);

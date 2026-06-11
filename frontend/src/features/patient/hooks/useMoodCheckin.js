@@ -97,7 +97,7 @@ export const useMoodCheckin = (patientId) => {
   }, []);
 
   const checkinDone = useCallback((result) => {
-    console.log('[useMoodCheckin] checkinDone() — emotion:', result?.emotion);
+    console.log('[useMoodCheckin] checkinDone() — mood:', result?.mood, 'arousal:', result?.arousal);
     setActiveCheckin(null);
   }, []);
 

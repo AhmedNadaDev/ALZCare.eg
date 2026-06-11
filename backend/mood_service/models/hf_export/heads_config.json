@@ -1,0 +1,6 @@
+{
+  "num_classes": 6,
+  "num_arousal": 2,
+  "dropout": 0.1,
+  "hidden_size": 768
+}

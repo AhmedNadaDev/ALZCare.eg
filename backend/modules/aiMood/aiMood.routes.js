@@ -6,7 +6,7 @@
  *   protectPatient        — patient audio-upload route
  *
  * Audio upload:
- *   multer memoryStorage so the buffer goes straight to the emotion service
+ *   multer memoryStorage so the buffer goes straight to the mood service
  *   without touching the local filesystem.
  *   Accepts any audio MIME type or extension (browser format varies by OS).
  */

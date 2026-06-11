@@ -1,0 +1,12 @@
+{
+  "members": [
+    {
+      "seed": 42,
+      "file": "best_seed42.pt",
+      "val_macro_f1": 0.8156639021318575
+    }
+  ],
+  "temperature": 1.0321611166000366,
+  "primary": "best.pt",
+  "note": "average calibrated softmax over members for ensemble inference"
+}

@@ -45,7 +45,7 @@ export const WEEKDAYS = [
   { key: 'saturday', short: 'Sat' },
 ];
 
-export const API_ORIGIN = 'http://localhost:5001';
+export const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
 /** Resolve a stored relative media URL (/uploads/...) to an absolute URL. */
 export const mediaUrl = (url) => {

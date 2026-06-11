@@ -1,6 +1,6 @@
 import { tokenManager } from '../../shared/api/api';
 
-const API_BASE_URL = 'http://localhost:5001/api';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5001') + '/api';
 
 /**
  * Returns the JWT for the currently active role.
@@ -40,6 +40,7 @@ export const askChatbot = async (question, patientId = null) => {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
     body: JSON.stringify(body),

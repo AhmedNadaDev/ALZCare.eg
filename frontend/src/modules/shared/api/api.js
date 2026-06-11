@@ -3,7 +3,7 @@
  * Completely isolated from any existing auth system
  */
 
-const API_BASE_URL = 'http://localhost:5001/api';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5001') + '/api';
 
 // Token storage keys
 const DOCTOR_TOKEN_KEY  = 'alzcare_doctor_token';
@@ -47,6 +47,9 @@ const makeRequest = async (endpoint, options = {}, token) => {
 
   const headers = {
     'Content-Type': 'application/json',
+    // Bypass the ngrok browser-warning interstitial page so fetch/XHR calls
+    // get the real JSON response instead of an HTML warning page.
+    'ngrok-skip-browser-warning': 'true',
     ...options.headers,
   };
 
@@ -207,22 +210,6 @@ export const medicationsAPI = {
   getTodaySchedule: (patientId) => doctorOrFamilyRequest(`/medications/patient/${patientId}/today`),
   getAdherence:     (patientId, days = 30) =>
     doctorOrFamilyRequest(`/medications/patient/${patientId}/adherence?days=${days}`),
-};
-
-// ===== MOODS API =====
-// All mood routes use protectDoctorOrFamily — both roles can access.
-export const moodsAPI = {
-  create: (data) => doctorOrFamilyRequest('/moods', { method: 'POST', body: data }),
-  getByPatient: (patientId, options = {}) => {
-    const params = new URLSearchParams(options).toString();
-    return doctorOrFamilyRequest(`/moods/patient/${patientId}${params ? `?${params}` : ''}`);
-  },
-  getById:     (id) => doctorOrFamilyRequest(`/moods/${id}`),
-  update:      (id, data) => doctorOrFamilyRequest(`/moods/${id}`, { method: 'PUT', body: data }),
-  delete:      (id) => doctorOrFamilyRequest(`/moods/${id}`, { method: 'DELETE' }),
-  getStats:    (patientId, days = 30) => doctorOrFamilyRequest(`/moods/patient/${patientId}/stats?days=${days}`),
-  getAbnormal: (patientId, days = 30) =>
-    doctorOrFamilyRequest(`/moods/patient/${patientId}/abnormal?days=${days}`),
 };
 
 // ===== FAMILY MEDICATIONS API =====
@@ -493,7 +480,6 @@ export default {
   patientsAPI,
   medicationsAPI,
   familyMedicationsAPI,
-  moodsAPI,
   aiMoodAPI,
   notificationsAPI,
   faceRecognitionAPI,

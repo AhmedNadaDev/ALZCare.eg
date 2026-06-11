@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { patientsAPI, medicationsAPI, moodsAPI } from '../services/patientService';
+import { patientsAPI, medicationsAPI, aiMoodAPI } from '../services/patientService';
+import { getSocket, joinPatientRoom } from '../../../../modules/shared/socket/socketClient';
 
 const usePatientData = (id) => {
   const [patient, setPatient] = useState(null);
@@ -14,8 +15,8 @@ const usePatientData = (id) => {
       const [patientRes, medsRes, moodsRes, statsRes] = await Promise.all([
         patientsAPI.getById(id),
         medicationsAPI.getByPatient(id),
-        moodsAPI.getByPatient(id, { days: 30, limit: 10 }),
-        moodsAPI.getStats(id, 30),
+        aiMoodAPI.getHistory(id, { days: 30, limit: 30 }),
+        aiMoodAPI.getStats(id, 30),
       ]);
 
       setPatient(patientRes.data);
@@ -32,6 +33,24 @@ const usePatientData = (id) => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Real-time AI mood updates: join the patient room and refresh on new check-ins.
+  useEffect(() => {
+    if (!id) return;
+    const socket = getSocket();
+    joinPatientRoom(id);
+
+    const onMoodUpdated = ({ mood } = {}) => {
+      if (!mood) return;
+      console.log('[usePatientData] mood:updated received:', mood.mood, mood.arousal);
+      setMoodHistory((prev) => [mood, ...prev.filter((m) => m._id !== mood._id).slice(0, 49)]);
+      // Refresh the aggregated breakdown so stats stay in sync.
+      aiMoodAPI.getStats(id, 30).then((r) => setMoodStats(r.data || null)).catch(() => {});
+    };
+
+    socket.on('mood:updated', onMoodUpdated);
+    return () => socket.off('mood:updated', onMoodUpdated);
+  }, [id]);
 
   return { patient, medications, moodHistory, moodStats, loading, refetch: fetchData };
 };

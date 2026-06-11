@@ -1,117 +1,41 @@
+/**
+ * PatientMood.jsx — AI Voice Mood Monitoring (Doctor Dashboard, read-only).
+ *
+ * The doctor sees the same WavLM AI mood data as the family (latest mood + arousal,
+ * 30-day breakdown, timeline) but cannot edit the check-in schedule — scheduling is
+ * a family/caregiver responsibility. Data is supplied by usePatientData (aiMoodAPI).
+ */
+
 import React from 'react';
-import { HeartIcon, TrashIcon } from '../../../shared/icons';
-import { moodsAPI } from '../services/patientService';
+import { LatestMoodCard, MoodStatsPanel, MoodTimeline } from '../../../shared/mood/MoodViews';
 
-const getMoodEmoji = (mood) => {
-  const emojis = {
-    very_happy: '😄',
-    happy: '🙂',
-    neutral: '😐',
-    sad: '😢',
-    very_sad: '😭',
-    anxious: '😰',
-    confused: '😕',
-    agitated: '😤',
-    calm: '😌',
-    sleepy: '😴',
-  };
-  return emojis[mood] || '😐';
-};
+const BrainIcon   = () => <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.54"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.54"/></svg>;
+const RefreshIcon = () => <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>;
 
-const PatientMood = ({ moodHistory, moodStats, onRefresh }) => {
-  const handleDeleteMood = async (moodId) => {
-    if (window.confirm('Are you sure you want to delete this mood entry?')) {
-      try {
-        await moodsAPI.delete(moodId);
-        onRefresh();
-      } catch (error) {
-        console.error('Failed to delete mood entry:', error);
-        alert('Failed to delete mood entry');
-      }
-    }
-  };
-
+const PatientMood = ({ moodHistory = [], moodStats = null, onRefresh }) => {
+  const latest = moodHistory[0] || null;
   return (
-    <div className="bg-white/[0.03] rounded-2xl border border-white/[0.08] p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="h-10 w-10 rounded-xl bg-pink-500/20 flex items-center justify-center text-pink-400">
-          <HeartIcon />
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400"><BrainIcon /></div>
+          <div>
+            <h2 className="text-lg font-bold text-white">AI Mood Monitoring</h2>
+            <p className="text-xs text-gray-500">Voice-based mood + arousal · acoustic estimate, not a diagnosis</p>
+          </div>
         </div>
-        <h2 className="text-lg font-bold text-white">Mood History</h2>
+        {onRefresh && (
+          <button onClick={onRefresh} className="p-2 text-gray-400 hover:text-white hover:bg-white/[0.05] rounded-xl transition-colors" title="Refresh"><RefreshIcon /></button>
+        )}
       </div>
 
-      {/* Mood Stats */}
-      {moodStats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white/[0.02] rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{moodStats.totalEntries}</p>
-            <p className="text-xs text-gray-500">Total Entries</p>
-          </div>
-          <div className="bg-white/[0.02] rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{moodStats.averageScore}</p>
-            <p className="text-xs text-gray-500">Average Score</p>
-          </div>
-          <div className="bg-white/[0.02] rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{moodStats.abnormalCount}</p>
-            <p className="text-xs text-gray-500">Abnormal</p>
-          </div>
-          <div className="bg-white/[0.02] rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{moodStats.abnormalPercentage}%</p>
-            <p className="text-xs text-gray-500">Abnormal Rate</p>
-          </div>
-        </div>
-      )}
+      <LatestMoodCard mood={latest} />
+      <MoodStatsPanel stats={moodStats} />
 
-      {/* Mood List */}
-      {moodHistory.length === 0 ? (
-        <div className="text-center py-12">
-          <HeartIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-          <p className="text-gray-400">No mood entries yet</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {moodHistory.map((entry) => (
-            <div
-              key={entry._id}
-              className={`p-4 rounded-xl border ${
-                entry.isAbnormal
-                  ? 'bg-red-500/10 border-red-500/30'
-                  : 'bg-white/[0.02] border-white/[0.05]'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 flex-1">
-                  <span className="text-3xl">{getMoodEmoji(entry.mood)}</span>
-                  <div className="flex-1">
-                    <p className="font-medium text-white capitalize">{entry.mood.replace('_', ' ')}</p>
-                    <p className="text-sm text-gray-400">Score: {entry.moodScore}/10</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-sm text-gray-400">
-                      {new Date(entry.recordedAt).toLocaleDateString()}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(entry.recordedAt).toLocaleTimeString()}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteMood(entry._id)}
-                    className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
-                    title="Delete mood entry"
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-              </div>
-              {entry.notes && (
-                <p className="mt-2 text-sm text-gray-400">{entry.notes}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <div>
+        <p className="text-sm font-bold text-white mb-3">Check-in Timeline</p>
+        <MoodTimeline history={moodHistory} />
+      </div>
     </div>
   );
 };

@@ -44,8 +44,8 @@ const PatientOverview = ({ patient, medications, moodStats }) => {
             <p className="text-xs text-gray-500">Active Medications</p>
           </div>
           <div className="bg-white/[0.02] rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{moodStats?.averageScore || 0}</p>
-            <p className="text-xs text-gray-500">Avg Mood (30d)</p>
+            <p className="text-2xl font-bold text-white">{moodStats?.totalEntries || 0}</p>
+            <p className="text-xs text-gray-500">AI Check-ins (30d)</p>
           </div>
         </div>
       </div>

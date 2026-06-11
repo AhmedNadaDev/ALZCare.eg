@@ -1,0 +1,15 @@
+# ALZCare Mood Detection service (WavLM multi-task) — Python inference sidecar.
+# Install:  pip install -r requirements.txt
+
+torch>=2.0.0
+transformers>=4.35.0
+
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.23.0
+scipy>=1.10.0
+
+# FastAPI microservice
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6

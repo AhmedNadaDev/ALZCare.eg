@@ -23,7 +23,6 @@ const notificationSchema = new mongoose.Schema({
       'medication_missed',
       'medication_taken',
       'mood_abnormal',
-      'mood_entry',
       'appointment_reminder',
       'patient_update',
       'system_alert',
@@ -115,22 +114,25 @@ notificationSchema.statics.createMissedMedicationAlert = async function(recipien
   });
 };
 
-// Static method to create abnormal mood alert
-notificationSchema.statics.createAbnormalMoodAlert = async function(recipientId, recipientModel, patient, moodEntry) {
+// Static method to create an abnormal AI voice-mood alert (WavLM check-in).
+notificationSchema.statics.createAbnormalAiMoodAlert = async function(recipientId, recipientModel, patient, aiMood) {
+  const confPct = Math.round((aiMood.moodConfidence || 0) * 100);
   return this.create({
     recipient: recipientId,
     recipientModel,
     patient: patient._id,
     type: 'mood_abnormal',
-    priority: 'high',
-    title: 'Abnormal Mood Detected',
-    message: `${patient.firstName} has shown concerning mood patterns: ${moodEntry.mood} (Score: ${moodEntry.moodScore}/10)`,
+    priority: aiMood.arousal === 'high' ? 'high' : 'medium',
+    title: 'Concerning Mood Detected',
+    message: `AI voice check-in flagged ${patient.firstName} as ${aiMood.mood} `
+      + `(${aiMood.arousal} arousal, ${confPct}% confidence).`,
     data: {
-      moodId: moodEntry._id,
-      mood: moodEntry.mood,
-      moodScore: moodEntry.moodScore,
+      aiMoodId: aiMood._id,
+      mood: aiMood.mood,
+      moodConfidence: aiMood.moodConfidence,
+      arousal: aiMood.arousal,
+      abstained: aiMood.abstained,
       patientName: patient.fullName,
-      behaviors: moodEntry.behaviors
     }
   });
 };

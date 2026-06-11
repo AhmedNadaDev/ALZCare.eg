@@ -168,7 +168,7 @@ const DoctorDashboard = () => {
           <div className="flex items-center gap-3">
             {row.profileImage ? (
               <img
-                src={`http://localhost:5001${row.profileImage}`}
+                src={`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}${row.profileImage}`}
                 alt=""
                 className="h-10 w-10 rounded-full object-cover flex-shrink-0"
               />
@@ -191,7 +191,7 @@ const DoctorDashboard = () => {
             <div className="flex items-center gap-3">
               {row.profileImage ? (
                 <img
-                  src={`http://localhost:5001${row.profileImage}`}
+                  src={`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}${row.profileImage}`}
                   alt=""
                   className="h-10 w-10 rounded-full object-cover"
                 />

@@ -314,7 +314,7 @@ const DoctorDashboard = () => {
                   <div className="flex items-center gap-4">
                     {patient.profileImage ? (
                       <img
-                        src={`http://localhost:5001${patient.profileImage}`}
+                        src={`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}${patient.profileImage}`}
                         alt={patient.fullName}
                         className="h-12 w-12 rounded-full object-cover"
                       />

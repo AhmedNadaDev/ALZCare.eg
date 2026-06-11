@@ -1,17 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../../modules/shared/auth/AuthContext';
-import { medicationsAPI, moodsAPI, notificationsAPI } from '../../../../modules/shared/api/api';
+import { medicationsAPI, aiMoodAPI, notificationsAPI } from '../../../../modules/shared/api/api';
 import {
   PillIconLg as PillIcon,
-  HeartIconLg as HeartIcon,
   CheckCircleIcon,
-  LoadingSpinner,
-  ClockIcon,
   BellIcon,
 } from '../../../shared/icons';
 import DonutChart from '../../../../components/ui/DonutChart';
-import SparklineChart from '../../../../components/ui/SparklineChart';
+import { LatestMoodCard, MoodStatsPanel } from '../../../shared/mood/MoodViews';
+import { moodCfg } from '../../../shared/mood/moodConfig';
 
 // ===== Local Icons =====
 const XCircleIcon = () => (
@@ -19,15 +17,6 @@ const XCircleIcon = () => (
     <circle cx="12" cy="12" r="10" />
     <path d="m15 9-6 6" />
     <path d="m9 9 6 6" />
-  </svg>
-);
-
-const SmileIcon = () => (
-  <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-    <line x1="9" x2="9.01" y1="9" y2="9" />
-    <line x1="15" x2="15.01" y1="9" y2="9" />
   </svg>
 );
 
@@ -68,43 +57,32 @@ const getPriorityColor = (priority) => {
   }
 };
 
-const getMoodScoreColor = (score) => {
-  if (score >= 7) return 'text-green-400';
-  if (score >= 4) return 'text-yellow-400';
-  return 'text-red-400';
-};
-
 const FamilyDashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [todaySchedule, setTodaySchedule] = useState([]);
   const [moodStats, setMoodStats] = useState(null);
+  const [latestMood, setLatestMood] = useState(null);
   const [adherence, setAdherence] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showMoodModal, setShowMoodModal] = useState(false);
-  const [moodData, setMoodData] = useState({
-    mood: '',
-    moodScore: 5,
-    notes: '',
-    location: { address: '', city: '' },
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState(null);
+  const [currentLocation] = useState(null);
 
   const patient = user?.patient;
 
   useEffect(() => {
     if (patient?._id) fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patient]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [scheduleRes, moodRes, notifRes, adherenceRes, unreadRes] = await Promise.all([
+      const [scheduleRes, moodRes, latestRes, notifRes, adherenceRes, unreadRes] = await Promise.all([
         medicationsAPI.getTodaySchedule(patient._id),
-        moodsAPI.getStats(patient._id, 7),
+        aiMoodAPI.getStats(patient._id, 30),
+        aiMoodAPI.getLatest(patient._id),
         notificationsAPI.getRecent(10),
         medicationsAPI.getAdherence(patient._id, 7).catch(() => null),
         notificationsAPI.getUnreadCount().catch(() => ({ data: { count: 0 } })),
@@ -112,6 +90,7 @@ const FamilyDashboard = () => {
 
       setTodaySchedule(scheduleRes.data || []);
       setMoodStats(moodRes.data || null);
+      setLatestMood(latestRes.data || null);
       setNotifications(notifRes.data || []);
       setAdherence(adherenceRes?.data || null);
       setUnreadCount(unreadRes.data?.count || unreadRes.data?.unreadCount || 0);
@@ -130,40 +109,11 @@ const FamilyDashboard = () => {
       await medicationsAPI.log(medicationId, { scheduledTime, status, location: locationData });
       const scheduleRes = await medicationsAPI.getTodaySchedule(patient._id);
       setTodaySchedule(scheduleRes.data || []);
-      // Refresh adherence
       const adherenceRes = await medicationsAPI.getAdherence(patient._id, 7).catch(() => null);
       setAdherence(adherenceRes?.data || null);
     } catch (error) {
       console.error('Failed to log medication:', error);
       alert('Failed to log medication: ' + (error.message || 'Unknown error'));
-    }
-  };
-
-  const handleMoodSubmit = async (e) => {
-    e.preventDefault();
-    if (!moodData.mood) return;
-
-    setSubmitting(true);
-    try {
-      const locationData = currentLocation
-        ? { ...moodData.location, coordinates: currentLocation }
-        : null;
-      await moodsAPI.create({
-        patientId: patient._id,
-        mood: moodData.mood,
-        moodScore: moodData.moodScore,
-        notes: moodData.notes,
-        location: locationData,
-      });
-      setShowMoodModal(false);
-      setMoodData({ mood: '', moodScore: 5, notes: '', location: { address: '', city: '' } });
-      const moodRes = await moodsAPI.getStats(patient._id, 7);
-      setMoodStats(moodRes.data || null);
-    } catch (error) {
-      console.error('Failed to submit mood:', error);
-      alert('Failed to submit mood entry: ' + (error.message || 'Unknown error'));
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -176,17 +126,6 @@ const FamilyDashboard = () => {
       console.error('Failed to mark notifications as read:', error);
     }
   };
-
-  const moodOptions = [
-    { value: 'very_happy', label: 'Very Happy', emoji: '\u{1F604}' },
-    { value: 'happy', label: 'Happy', emoji: '\u{1F642}' },
-    { value: 'neutral', label: 'Neutral', emoji: '\u{1F610}' },
-    { value: 'sad', label: 'Sad', emoji: '\u{1F622}' },
-    { value: 'very_sad', label: 'Very Sad', emoji: '\u{1F62D}' },
-    { value: 'anxious', label: 'Anxious', emoji: '\u{1F630}' },
-    { value: 'confused', label: 'Confused', emoji: '\u{1F615}' },
-    { value: 'calm', label: 'Calm', emoji: '\u{1F60C}' },
-  ];
 
   // Adherence donut data
   const adherenceSegments = adherence
@@ -203,16 +142,12 @@ const FamilyDashboard = () => {
 
   const adherenceRate = adherence?.adherenceRate ?? 0;
 
-  // Sparkline data from mood stats trend
-  const moodTrendData = (moodStats?.trend || []).map((item) => ({
-    x: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
-    y: item.averageScore || 0,
-  }));
-
   // Today's schedule stats
   const todayTaken = todaySchedule.filter((m) => m.status === 'taken').length;
   const todayTotal = todaySchedule.length;
   const todayProgress = todayTotal > 0 ? Math.round((todayTaken / todayTotal) * 100) : 0;
+
+  const latestCfg = latestMood ? moodCfg(latestMood.mood) : null;
 
   if (loading) {
     return (
@@ -230,7 +165,7 @@ const FamilyDashboard = () => {
           <div className="flex items-center gap-4">
             {patient?.profileImage ? (
               <img
-                src={`http://localhost:5001${patient.profileImage}`}
+                src={`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}${patient.profileImage}`}
                 alt={patient.fullName}
                 className="h-20 w-20 rounded-full object-cover ring-2 ring-purple-500/30 flex-shrink-0"
               />
@@ -260,10 +195,10 @@ const FamilyDashboard = () => {
               <p className="text-xs text-gray-400">Adherence</p>
             </div>
             <div className="bg-white/[0.08] rounded-xl px-4 py-3 text-center min-w-[100px]">
-              <p className={`text-lg font-bold ${getMoodScoreColor(moodStats?.averageScore || 0)}`}>
-                {moodStats?.averageScore || '—'}
+              <p className={`text-lg font-bold ${latestCfg ? latestCfg.color : 'text-white'}`}>
+                {latestCfg ? `${latestCfg.emoji} ${latestCfg.label}` : '—'}
               </p>
-              <p className="text-xs text-gray-400">Mood Avg</p>
+              <p className="text-xs text-gray-400">Latest Mood</p>
             </div>
             <div className="bg-white/[0.08] rounded-xl px-4 py-3 text-center min-w-[100px]">
               <p className="text-lg font-bold text-white">
@@ -393,114 +328,28 @@ const FamilyDashboard = () => {
         </div>
       </section>
 
-      {/* ===== Section 3: Mood Tracking Enhanced ===== */}
+      {/* ===== Section 3: AI Mood Monitoring ===== */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
-        {/* Mood Trend Chart */}
-        <div className="lg:col-span-7 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6">
-          <h2 className="text-lg font-bold text-white mb-1">Mood Trend</h2>
-          <p className="text-xs text-gray-500 mb-5">7-day mood score overview</p>
-
-          {moodTrendData.length >= 2 ? (
-            <SparklineChart
-              data={moodTrendData}
-              width={500}
-              height={180}
-              color="#a855f7"
-              fillOpacity={0.15}
-              showDots={true}
-              showLabels={true}
-              yMin={0}
-              yMax={10}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12">
-              <SmileIcon className="h-10 w-10 text-gray-600 mb-2" />
-              <p className="text-gray-500 text-sm">Not enough mood data for trends</p>
-              <p className="text-xs text-gray-600">Add mood entries to see the chart</p>
-            </div>
-          )}
-
-          {/* Mood distribution badges */}
-          {moodStats?.moodDistribution && Object.keys(moodStats.moodDistribution).length > 0 && (
-            <div className="mt-4 pt-4 border-t border-white/[0.06]">
-              <p className="text-xs text-gray-500 mb-2">Mood Distribution</p>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(moodStats.moodDistribution)
-                  .sort((a, b) => b[1] - a[1])
-                  .slice(0, 5)
-                  .map(([mood, count]) => (
-                    <span
-                      key={mood}
-                      className="px-2.5 py-1 bg-purple-500/15 text-purple-300 rounded-full text-xs font-medium"
-                    >
-                      {mood.replace(/_/g, ' ')} ({count})
-                    </span>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Mood Stats + Quick Entry */}
-        <div className="lg:col-span-5 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-pink-500/20 flex items-center justify-center text-pink-400">
-                <HeartIcon />
-              </div>
-              <h2 className="text-lg font-bold text-white">Mood Stats</h2>
-            </div>
+        <div className="lg:col-span-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white">AI Mood</h2>
             <button
-              onClick={() => setShowMoodModal(true)}
-              className="px-4 py-2 bg-purple-500/20 text-purple-300 rounded-lg hover:bg-purple-500/30 transition-colors text-sm font-medium"
+              onClick={() => navigate(`/family/patients/${patient?._id}`)}
+              className="text-sm text-purple-300 hover:text-purple-200 transition-colors"
             >
-              Add Entry
+              Manage check-ins →
             </button>
           </div>
-
-          {moodStats ? (
-            <div className="space-y-4">
-              {/* Average Score - large display */}
-              <div className="bg-white/[0.03] rounded-xl p-5 text-center">
-                <p className={`text-4xl font-bold ${getMoodScoreColor(moodStats.averageScore || 0)}`}>
-                  {moodStats.averageScore || '—'}
-                </p>
-                <p className="text-sm text-gray-400 mt-1">Average Score (7 days)</p>
-              </div>
-
-              {/* Stats grid */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white/[0.02] rounded-xl p-3.5 text-center">
-                  <p className="text-xl font-bold text-white">{moodStats.totalEntries || 0}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Total Entries</p>
-                </div>
-                <div className="bg-white/[0.02] rounded-xl p-3.5 text-center">
-                  <p className={`text-xl font-bold ${(moodStats.abnormalPercentage || 0) > 20 ? 'text-red-400' : 'text-white'}`}>
-                    {moodStats.abnormalCount || 0}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-0.5">Abnormal</p>
-                </div>
-              </div>
-
-              {/* Recent behaviors */}
-              {moodStats.recentBehaviors && moodStats.recentBehaviors.length > 0 && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-2">Recent Behaviors</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {moodStats.recentBehaviors.slice(0, 4).map((behavior, i) => (
-                      <span key={i} className="px-2 py-1 bg-white/[0.05] text-gray-400 rounded-lg text-xs">
-                        {behavior}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+          <LatestMoodCard mood={latestMood} />
+        </div>
+        <div className="lg:col-span-7">
+          {moodStats?.breakdown?.length ? (
+            <MoodStatsPanel stats={moodStats} />
           ) : (
-            <div className="text-center py-8">
-              <SmileIcon className="h-12 w-12 text-gray-600 mx-auto mb-2" />
-              <p className="text-gray-500">No mood data yet</p>
-              <p className="text-sm text-gray-600">Add your first mood entry</p>
+            <div className="h-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6 flex flex-col items-center justify-center text-center">
+              <div className="text-4xl mb-2">🎙️</div>
+              <p className="text-gray-400">No AI mood check-ins yet</p>
+              <p className="text-sm text-gray-600 mt-1">Schedule voice check-ins from the patient details page.</p>
             </div>
           )}
         </div>
@@ -559,82 +408,6 @@ const FamilyDashboard = () => {
           </div>
         )}
       </section>
-
-      {/* ===== Mood Modal ===== */}
-      {showMoodModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-          <div className="bg-[#1a0a2e] rounded-2xl border border-white/10 p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold text-white mb-4">Add Mood Entry</h3>
-
-            <form onSubmit={handleMoodSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  How is {patient?.firstName} feeling?
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {moodOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setMoodData((prev) => ({ ...prev, mood: option.value }))}
-                      className={`p-3 rounded-xl text-center transition-all ${
-                        moodData.mood === option.value
-                          ? 'bg-purple-500/30 border-2 border-purple-500'
-                          : 'bg-white/[0.05] border-2 border-transparent hover:bg-white/[0.08]'
-                      }`}
-                    >
-                      <span className="text-2xl">{option.emoji}</span>
-                      <p className="text-xs text-gray-400 mt-1">{option.label}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Mood Score: {moodData.moodScore}/10
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={moodData.moodScore}
-                  onChange={(e) => setMoodData((prev) => ({ ...prev, moodScore: parseInt(e.target.value) }))}
-                  className="w-full accent-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Notes (Optional)</label>
-                <textarea
-                  value={moodData.notes}
-                  onChange={(e) => setMoodData((prev) => ({ ...prev, notes: e.target.value }))}
-                  rows={3}
-                  className="w-full px-4 py-3 bg-white/[0.05] border-2 border-white/10 rounded-xl text-white placeholder-gray-500 focus:border-purple-500 outline-none transition-all resize-none"
-                  placeholder="Any observations about their mood..."
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowMoodModal(false)}
-                  className="flex-1 px-4 py-3 text-gray-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!moodData.mood || submitting}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-violet-600 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {submitting ? <LoadingSpinner /> : 'Save Entry'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </>
   );
 };

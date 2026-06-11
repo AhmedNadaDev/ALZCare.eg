@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
 import LocationTracker from '../../../features/patient/components/LocationTracker';
 import MoodCheckinModal from '../../../features/patient/components/MoodCheckinModal';
+import CheckinPrimer from '../../../features/patient/components/CheckinPrimer';
 import VoiceInteractionModal from '../../../features/patient/components/VoiceInteractionModal';
 import { useMoodCheckin } from '../../../features/patient/hooks/useMoodCheckin';
 import { useVoiceEngine } from '../../../features/patient/hooks/useVoiceEngine';
@@ -228,6 +229,9 @@ const PatientPage = () => {
 
         {patientId ? (
           <>
+            {/* One-time mic/audio grant so scheduled check-ins run hands-free */}
+            <CheckinPrimer />
+
             <TodayEvents plan={plan} />
 
             <div className="mt-2">

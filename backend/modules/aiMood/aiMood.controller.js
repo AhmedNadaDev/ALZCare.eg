@@ -1,44 +1,53 @@
 /**
  * aiMood.controller.js
  *
- * AI mood check-in endpoints — fully traced for production debugging.
- *
- * Each handler logs:
- *   [aiMoodCtrl/<action>] prefix  +  step-level breadcrumbs
+ * AI voice mood check-in endpoints (WavLM multi-task model).
  *
  * analyzeAndSave pipeline:
  *   STEP A — validate incoming file (size, mime, buffer)
- *   STEP B — call Python emotion service
+ *   STEP B — call the Python mood service (WavLM)
  *   STEP C — persist AIMood to MongoDB
- *   STEP D — emit Socket.IO mood:updated
- *   STEP E — return HTTP 201
+ *   STEP D — create an abnormal-mood notification (if flagged)
+ *   STEP E — emit Socket.IO mood:updated
+ *   STEP F — return HTTP 201
  */
 
 import AIMood from './AIMood.model.js';
 import MoodSchedule from './MoodSchedule.model.js';
-import { analyzeEmotion, checkEmotionService } from './emotion.service.js';
+import Patient from '../../models/Patient.model.js';
+import Notification from '../../models/Notification.model.js';
+import { analyzeMood, checkMoodService, START_HINT } from './moodInference.service.js';
 import { emitToPatientRoom } from '../socket/socketManager.js';
 import { rescheduleForPatient } from './moodCheckin.scheduler.js';
 
+/**
+ * Verify the requesting doctor/family may act on this patient.
+ *   • family — the token is pinned to one patient (req.patientId must match)
+ *   • doctor — the patient's `doctor` field must equal the doctor's id
+ * Returns the Patient doc on success, or null if access is denied.
+ */
+const resolveAccessiblePatient = async (req, patientId) => {
+  if (req.userRole === 'family') {
+    if (req.patientId?.toString() !== patientId) return null;
+    return Patient.findById(patientId);
+  }
+  if (req.userRole === 'doctor') {
+    const patient = await Patient.findById(patientId);
+    if (!patient) return null;
+    return patient.doctor?.toString() === req.user._id.toString() ? patient : null;
+  }
+  return null;
+};
+
 // ── Schedule endpoints ────────────────────────────────────────────────────────
 
-/**
- * POST /schedule
- * Body: { patientId, scheduledTimes: ["HH:MM", ...], isActive? }
- * Backward-compat: also accepts { scheduledTime: "HH:MM" } (single string).
- */
+/** POST /schedule  Body: { patientId, scheduledTimes: ["HH:MM", ...], isActive? } */
 export const setSchedule = async (req, res) => {
   const LOG = '[aiMoodCtrl/setSchedule]';
   try {
     const { patientId, isActive = true } = req.body;
-
-    // Accept both old (single string) and new (array) format
     let scheduledTimes = req.body.scheduledTimes;
-    if (!scheduledTimes && req.body.scheduledTime) {
-      scheduledTimes = [req.body.scheduledTime];  // backward compat
-    }
-
-    console.log(`${LOG} patientId=${patientId} times=${JSON.stringify(scheduledTimes)} isActive=${isActive}`);
+    if (!scheduledTimes && req.body.scheduledTime) scheduledTimes = [req.body.scheduledTime];
 
     if (!patientId || !scheduledTimes?.length) {
       return res.status(400).json({
@@ -47,7 +56,6 @@ export const setSchedule = async (req, res) => {
       });
     }
 
-    // Validate each time slot
     const timeRegex = /^\d{2}:\d{2}$/;
     const invalid = scheduledTimes.filter((t) => !timeRegex.test(t));
     if (invalid.length) {
@@ -57,57 +65,37 @@ export const setSchedule = async (req, res) => {
       });
     }
 
-    // Deduplicate times within the request
     const uniqueTimes = [...new Set(scheduledTimes)].sort();
 
-    // Family can only manage their own patient
-    if (req.userRole === 'family' && req.patientId?.toString() !== patientId) {
-      return res.status(403).json({
-        success: false,
-        message: 'You can only manage schedules for your own patient.',
-      });
+    const patient = await resolveAccessiblePatient(req, patientId);
+    if (!patient) {
+      return res.status(403).json({ success: false, message: 'You do not have access to this patient.' });
     }
 
     const creatorModel = req.userRole === 'doctor' ? 'Doctor' : 'Family';
-
     const schedule = await MoodSchedule.findOneAndUpdate(
       { patientId },
-      {
-        scheduledTimes: uniqueTimes,
-        isActive,
-        createdBy: req.user._id,
-        createdByModel: creatorModel,
-      },
+      { scheduledTimes: uniqueTimes, isActive, createdBy: req.user._id, createdByModel: creatorModel },
       { upsert: true, new: true, runValidators: true }
     );
 
     console.log(`${LOG} Saved schedule: ${JSON.stringify(schedule.scheduledTimes)}`);
-
-    // Clear any today-trigger locks for this patient so new times can fire
     rescheduleForPatient(patientId);
 
-    return res.status(200).json({
-      success: true,
-      message: 'Mood check-in schedule saved.',
-      data: schedule,
-    });
+    return res.status(200).json({ success: true, message: 'Mood check-in schedule saved.', data: schedule });
   } catch (err) {
-    console.error(`[aiMoodCtrl/setSchedule] ERROR:`, err.message, err.stack);
+    console.error(`${LOG} ERROR:`, err.message);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * GET /schedule/:patientId
- */
+/** GET /schedule/:patientId */
 export const getSchedule = async (req, res) => {
   try {
     const { patientId } = req.params;
-
-    if (req.userRole === 'family' && req.patientId?.toString() !== patientId) {
+    if (!(await resolveAccessiblePatient(req, patientId))) {
       return res.status(403).json({ success: false, message: 'Forbidden.' });
     }
-
     const schedule = await MoodSchedule.findOne({ patientId });
     return res.status(200).json({ success: true, data: schedule || null });
   } catch (err) {
@@ -122,10 +110,10 @@ export const getSchedule = async (req, res) => {
 export const getHistory = async (req, res) => {
   try {
     const { patientId } = req.params;
-    const days  = Math.min(parseInt(req.query.days  || '30', 10), 365);
+    const days = Math.min(parseInt(req.query.days || '30', 10), 365);
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
 
-    if (req.userRole === 'family' && req.patientId?.toString() !== patientId) {
+    if (!(await resolveAccessiblePatient(req, patientId))) {
       return res.status(403).json({ success: false, message: 'Forbidden.' });
     }
 
@@ -146,11 +134,9 @@ export const getHistory = async (req, res) => {
 export const getLatest = async (req, res) => {
   try {
     const { patientId } = req.params;
-
-    if (req.userRole === 'family' && req.patientId?.toString() !== patientId) {
+    if (!(await resolveAccessiblePatient(req, patientId))) {
       return res.status(403).json({ success: false, message: 'Forbidden.' });
     }
-
     const latest = await AIMood.findOne({ patientId }).sort({ recordedAt: -1 }).lean();
     return res.status(200).json({ success: true, data: latest || null });
   } catch (err) {
@@ -165,16 +151,16 @@ export const getStats = async (req, res) => {
     const { patientId } = req.params;
     const days = Math.min(parseInt(req.query.days || '30', 10), 365);
 
-    if (req.userRole === 'family' && req.patientId?.toString() !== patientId) {
+    if (!(await resolveAccessiblePatient(req, patientId))) {
       return res.status(403).json({ success: false, message: 'Forbidden.' });
     }
 
-    const stats = await AIMood.getStats(patientId, days);
-    const total = stats.reduce((s, x) => s + x.count, 0);
+    const { breakdown, arousalBreakdown } = await AIMood.getStats(patientId, days);
+    const total = breakdown.reduce((s, x) => s + x.count, 0);
 
     return res.status(200).json({
       success: true,
-      data: { breakdown: stats, totalEntries: total, days },
+      data: { breakdown, arousalBreakdown, totalEntries: total, days },
     });
   } catch (err) {
     console.error('[aiMoodCtrl/getStats] ERROR:', err.message);
@@ -182,131 +168,117 @@ export const getStats = async (req, res) => {
   }
 };
 
-/** GET /service-status — dev/ops helper to check Python service health */
+/** GET /service-status — Python service health (doctor/family only) */
 export const getServiceStatus = async (req, res) => {
-  const { healthy, latencyMs, error } = await checkEmotionService();
+  const { healthy, latencyMs, error, info } = await checkMoodService();
   return res.status(healthy ? 200 : 503).json({
     success: healthy,
-    data: { healthy, latencyMs, error: error || null },
+    data: { healthy, latencyMs, error: error || null, info: info || null },
   });
 };
 
 // ── Patient audio-analysis endpoint ──────────────────────────────────────────
 
-/**
- * POST /analyze
- *
- * Fully traced pipeline — every step logs to [aiMoodCtrl/analyze] so you can
- * pinpoint exactly where a failure occurs.
- *
- * The health check is intentionally moved INTO the catch block of analyzeEmotion
- * (not run before every call) to avoid the extra 5 s latency and false negatives
- * during model inference on the Python side.
- */
+/** POST /analyze  (patient JWT, multipart field "audio") */
 export const analyzeAndSave = async (req, res) => {
   const LOG = '[aiMoodCtrl/analyze]';
-  const t0  = Date.now();
+  const t0 = Date.now();
 
-  // ── STEP A: Validate incoming file ─────────────────────────────────────────
-  console.log(`${LOG} STEP A — request received`);
-
+  // ── STEP A: validate file ──
   if (!req.file) {
-    console.error(`${LOG} STEP A ERROR — no file in request. Check multer field name is "audio"`);
     return res.status(400).json({
       success: false,
       message: 'No audio file provided. Send field name "audio" as multipart/form-data.',
     });
   }
-
   const { buffer, mimetype, originalname, size } = req.file;
-  const patientId     = req.user._id.toString();
+  const patientId = req.user._id.toString();
   const scheduledTime = req.body?.scheduledTime || null;
 
-  console.log(
-    `${LOG} STEP A — file OK: ` +
-    `name="${originalname}" size=${size}B mime="${mimetype}" ` +
-    `patientId=${patientId} scheduledTime=${scheduledTime}`
-  );
-
+  console.log(`${LOG} STEP A — name="${originalname}" size=${size}B mime="${mimetype}" patient=${patientId}`);
   if (!buffer || buffer.length === 0) {
-    console.error(`${LOG} STEP A ERROR — buffer is empty after multer`);
-    return res.status(400).json({
-      success: false,
-      message: 'Received file buffer is empty — upload may have been corrupted.',
-    });
+    return res.status(400).json({ success: false, message: 'Received file buffer is empty — upload may have been corrupted.' });
   }
 
-  // ── STEP B: Call Python emotion service ────────────────────────────────────
-  console.log(`${LOG} STEP B — calling emotion service…`);
-
-  let emotionResult;
+  // ── STEP B: call Python mood service ──
+  let result;
   try {
-    emotionResult = await analyzeEmotion(buffer, mimetype, originalname || 'audio.webm');
+    result = await analyzeMood(buffer, mimetype, originalname || 'audio.wav');
   } catch (err) {
-    const elapsed = Date.now() - t0;
-    console.error(`${LOG} STEP B ERROR after ${elapsed}ms:`, err.message);
-
-    // Run health check ONLY on failure to give a meaningful error message
-    const { healthy, error: healthErr } = await checkEmotionService();
+    console.error(`${LOG} STEP B ERROR after ${Date.now() - t0}ms:`, err.message);
+    const { healthy, error: healthErr } = await checkMoodService();
     if (!healthy) {
       return res.status(503).json({
         success: false,
-        message: 'Emotion analysis service is offline or not responding.',
+        message: 'Mood analysis service is offline or not responding.',
         detail: healthErr || err.message,
-        hint: 'cd emotion_project && uvicorn main:app --host 0.0.0.0 --port 8001',
+        hint: START_HINT,
       });
     }
-
     return res.status(502).json({
       success: false,
-      message: 'Emotion analysis failed — Python service returned an error.',
+      message: 'Mood analysis failed — Python service returned an error.',
       detail: err.message,
     });
   }
 
-  const { emotion, confidence, allScores, note } = emotionResult;
-  console.log(`${LOG} STEP B — emotion="${emotion}" confidence=${confidence} note=${note || 'none'}`);
-
-  // ── STEP C: Persist to MongoDB ─────────────────────────────────────────────
-  console.log(`${LOG} STEP C — saving AIMood to MongoDB…`);
-
+  // ── STEP C: persist ──
   let aiMood;
   try {
     aiMood = await AIMood.create({
       patientId,
-      emotion,
-      confidence,
-      allScores,
+      mood: result.mood,
+      moodConfidence: result.moodConfidence,
+      moodScores: result.moodScores,
+      topk: result.topk,
+      arousal: result.arousal,
+      arousalConfidence: result.arousalConfidence,
+      arousalScores: result.arousalScores,
+      arousalFromMood: result.arousalFromMood,
+      abstained: result.abstained,
+      note: result.note ?? null,
+      temperature: result.temperature,
+      durationSec: result.durationSec,
       scheduledTime,
       triggeredAt: new Date(),
       source: 'voice_ai_checkin',
     });
-    console.log(`${LOG} STEP C — saved _id=${aiMood._id}`);
+    console.log(`${LOG} STEP C — saved _id=${aiMood._id} mood=${aiMood.mood} arousal=${aiMood.arousal} abnormal=${aiMood.isAbnormal}`);
   } catch (err) {
     console.error(`${LOG} STEP C ERROR — MongoDB save failed:`, err.message);
-    return res.status(500).json({
-      success: false,
-      message: `Failed to save emotion result to database: ${err.message}`,
-    });
+    return res.status(500).json({ success: false, message: `Failed to save mood result: ${err.message}` });
   }
 
-  // ── STEP D: Socket.IO real-time emit ───────────────────────────────────────
-  console.log(`${LOG} STEP D — emitting mood:updated to patient room…`);
+  // ── STEP D: abnormal-mood notification (non-fatal) ──
+  if (aiMood.isAbnormal) {
+    try {
+      const patient = await Patient.findById(patientId).select('firstName lastName doctor family');
+      if (patient) {
+        const recipients = [];
+        if (patient.doctor) recipients.push({ id: patient.doctor, model: 'Doctor' });
+        if (patient.family) recipients.push({ id: patient.family, model: 'Family' });
+        await Promise.all(
+          recipients.map((r) => Notification.createAbnormalAiMoodAlert(r.id, r.model, patient, aiMood))
+        );
+        console.log(`${LOG} STEP D — abnormal notification sent to ${recipients.length} recipient(s)`);
+      }
+    } catch (err) {
+      console.error(`${LOG} STEP D WARNING — notification failed:`, err.message);
+    }
+  }
+
+  // ── STEP E: real-time emit ──
   try {
     emitToPatientRoom(patientId, 'mood:updated', { mood: aiMood.toObject() });
-    console.log(`${LOG} STEP D — mood:updated emitted`);
   } catch (err) {
-    // Non-fatal: DB save already succeeded
-    console.error(`${LOG} STEP D WARNING — Socket emit failed:`, err.message);
+    console.error(`${LOG} STEP E WARNING — socket emit failed:`, err.message);
   }
 
-  // ── STEP E: Respond ────────────────────────────────────────────────────────
-  const totalMs = Date.now() - t0;
-  console.log(`${LOG} STEP E — SUCCESS total=${totalMs}ms emotion="${emotion}" conf=${confidence}`);
-
+  // ── STEP F: respond ──
+  console.log(`${LOG} STEP F — SUCCESS total=${Date.now() - t0}ms`);
   return res.status(201).json({
     success: true,
-    message: `Emotion detected: ${emotion}`,
+    message: `Mood detected: ${aiMood.mood} (arousal ${aiMood.arousal})`,
     data: aiMood,
   });
 };

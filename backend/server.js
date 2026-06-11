@@ -18,7 +18,6 @@ import authRoutes from './routes/auth.routes.js';
 import patientRoutes from './routes/patient.routes.js';
 import medicationRoutes from './routes/medication.routes.js';
 import familyMedicationRoutes from './routes/familyMedication.routes.js';
-import moodRoutes from './routes/mood.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import faceRecognitionRoutes, { faceRecognitionPublicRoutes } from './routes/faceRecognition.routes.js';
 import faceRecognitionController from './controllers/faceRecognition.controller.js';
@@ -45,9 +44,25 @@ import Counter from './models/Counter.model.js';
 const app = express();
 const httpServer = createServer(app);
 
+// ── CORS origins ─────────────────────────────────────────────────────────────
+// CORS_ORIGINS env var: comma-separated list of allowed origins.
+// In production/ngrok add your ngrok https URL there.
+const BASE_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176',
+  'http://localhost:3000',
+];
+const EXTRA_ORIGINS = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : [];
+const ALLOWED_ORIGINS = [...new Set([...BASE_ORIGINS, ...EXTRA_ORIGINS])];
+console.log('[CORS] Allowed origins:', ALLOWED_ORIGINS);
+
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176', 'http://localhost:3000'],
+  origin: ALLOWED_ORIGINS,
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
@@ -66,7 +81,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/doctor/patients', patientRoutes);
 app.use('/api/medications', medicationRoutes);
 app.use('/api/family/medications', familyMedicationRoutes);
-app.use('/api/moods', moodRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/family/face-recognition', faceRecognitionRoutes);
 app.use('/api/face-recognition', faceRecognitionPublicRoutes);
@@ -84,7 +98,27 @@ app.post('/api/ml/predict-person', (req, res, next) =>
   faceRecognitionController.recognizeFacePublic(req, res, next)
 );
 
-// ── Error handlers ────────────────────────────────────────────────────────────
+// ── Serve built frontend (SPA) ────────────────────────────────────────────────
+// When the built dist/ folder exists Express serves it directly.
+// This means the ngrok tunnel (which points at port 5001) serves BOTH the API
+// and the React app — no second tunnel needed.
+const DIST_PATH = path.join(__dirname, '../frontend/dist');
+app.use(express.static(DIST_PATH));
+
+// SPA catch-all: every non-API, non-socket, non-uploads path gets index.html
+// so React Router handles client-side navigation.
+app.get('*', (req, res, next) => {
+  if (
+    req.path.startsWith('/api/') ||
+    req.path.startsWith('/uploads/') ||
+    req.path.startsWith('/socket.io/')
+  ) {
+    return next();
+  }
+  res.sendFile(path.join(DIST_PATH, 'index.html'));
+});
+
+// ── Error handler (must come after all routes) ────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({
@@ -92,10 +126,6 @@ app.use((err, req, res, next) => {
     message: err.message || 'Internal Server Error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
-});
-
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'Route not found' });
 });
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -146,9 +176,22 @@ connectDB()
 
     // 4. Listen
     httpServer.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/api/health`);
-      console.log(`Socket.IO  : ws://localhost:${PORT}`);
+      console.log('');
+      console.log('╔══════════════════════════════════════════════════╗');
+      console.log('║         ALZCare Backend — STARTED                ║');
+      console.log('╚══════════════════════════════════════════════════╝');
+      console.log(`[Server]  Port        : ${PORT}`);
+      console.log(`[Server]  Health      : http://localhost:${PORT}/api/health`);
+      console.log(`[Server]  Socket.IO   : ws://localhost:${PORT}`);
+      console.log(`[Server]  CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
+      console.log(`[Server]  Mood svc URL: ${process.env.MOOD_SERVICE_URL || process.env.EMOTION_SERVICE_URL || 'http://localhost:8001'}`);
+      console.log('');
+      console.log('[Server]  For Ngrok mobile testing:');
+      console.log('[Server]  1. ngrok http 5001');
+      console.log('[Server]  2. Copy https URL → add to backend/.env CORS_ORIGINS=<url>');
+      console.log('[Server]  3. Copy https URL → add to frontend/.env.local: VITE_API_URL=<url> VITE_SOCKET_URL=<url>');
+      console.log('[Server]  4. Restart both servers');
+      console.log('');
     });
   })
   .catch((err) => {

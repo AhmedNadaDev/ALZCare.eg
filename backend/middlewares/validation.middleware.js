@@ -244,29 +244,6 @@ export const validateMedicationCreate = [
 ];
 
 /**
- * Mood Entry Validation
- */
-export const validateMoodCreate = [
-  body('patientId')
-    .notEmpty().withMessage('Patient ID is required')
-    .isMongoId().withMessage('Invalid patient ID'),
-  body('mood')
-    .notEmpty().withMessage('Mood is required')
-    .isIn(['very_happy', 'happy', 'neutral', 'sad', 'very_sad', 'anxious', 'confused', 'agitated', 'calm', 'sleepy'])
-    .withMessage('Invalid mood value'),
-  body('moodScore')
-    .notEmpty().withMessage('Mood score is required')
-    .isInt({ min: 1, max: 10 }).withMessage('Mood score must be between 1 and 10'),
-  body('energy')
-    .optional()
-    .isIn(['very_low', 'low', 'moderate', 'high', 'very_high']).withMessage('Invalid energy level'),
-  body('notes')
-    .optional()
-    .isLength({ max: 2000 }).withMessage('Notes cannot exceed 2000 characters'),
-  handleValidationErrors
-];
-
-/**
  * MongoDB ID Validation
  */
 export const validateMongoId = [
@@ -286,6 +263,5 @@ export default {
   validatePatientCreate,
   validatePatientUpdate,
   validateMedicationCreate,
-  validateMoodCreate,
   validateMongoId
 };

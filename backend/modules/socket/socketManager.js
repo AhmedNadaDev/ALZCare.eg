@@ -12,13 +12,17 @@ import { Server } from 'socket.io';
 
 let _io = null;
 
-const ALLOWED_ORIGINS = [
+const BASE_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:5176',
   'http://localhost:3000',
 ];
+const EXTRA_ORIGINS = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : [];
+const ALLOWED_ORIGINS = [...new Set([...BASE_ORIGINS, ...EXTRA_ORIGINS])];
 
 /**
  * Initialise Socket.IO on an existing http.Server.
@@ -37,19 +41,28 @@ export const initIO = (httpServer) => {
   });
 
   _io.on('connection', (socket) => {
-    console.log(`[Socket] client connected: ${socket.id}`);
+    const origin = socket.handshake.headers.origin || 'unknown';
+    const transport = socket.conn.transport.name;
+    console.log(`[Socket] ++ connected  id=${socket.id}  origin=${origin}  transport=${transport}`);
 
     // Client sends { patientId } immediately after connecting
     socket.on('join:patient-room', ({ patientId } = {}) => {
-      if (!patientId) return;
+      if (!patientId) {
+        console.warn(`[Socket] join:patient-room received without patientId from ${socket.id}`);
+        return;
+      }
       const room = `patient:${patientId}`;
       socket.join(room);
-      console.log(`[Socket] ${socket.id} joined room ${room}`);
+      console.log(`[Socket] ROOM JOIN  id=${socket.id}  room=${room}`);
       socket.emit('room:joined', { room, patientId });
     });
 
+    socket.conn.on('upgrade', (transport) => {
+      console.log(`[Socket] transport upgraded  id=${socket.id}  transport=${transport.name}`);
+    });
+
     socket.on('disconnect', (reason) => {
-      console.log(`[Socket] ${socket.id} disconnected — ${reason}`);
+      console.log(`[Socket] -- disconnected  id=${socket.id}  reason=${reason}`);
     });
 
     socket.on('error', (err) => {
@@ -58,6 +71,7 @@ export const initIO = (httpServer) => {
   });
 
   console.log('[Socket] Socket.IO server initialised');
+  console.log('[Socket] Allowed origins:', ALLOWED_ORIGINS);
   return _io;
 };
 

@@ -309,7 +309,7 @@ class PatientService {
    */
   async getPatientStats(patientId, userId, userRole) {
     const Medication = (await import('../models/Medication.model.js')).default;
-    const Mood = (await import('../models/Mood.model.js')).default;
+    const AIMood = (await import('../modules/aiMood/AIMood.model.js')).default;
 
     const patient = await this.getPatientById(patientId, userId, userRole);
 
@@ -335,8 +335,23 @@ class PatientService {
 
     const adherenceRate = totalScheduled > 0 ? Math.round((totalTaken / totalScheduled) * 100) : 100;
 
-    // Get mood stats
-    const moodStats = await Mood.getMoodStats(patientId, 30);
+    // Get AI voice-mood stats (last 30 days)
+    const since = new Date(Date.now() - 30 * 86400_000);
+    const aiEntries = await AIMood.find({ patientId, recordedAt: { $gte: since } })
+      .select('mood arousal isAbnormal')
+      .lean();
+    const totalEntries = aiEntries.length;
+    const abnormalCount = aiEntries.filter((e) => e.isAbnormal).length;
+    const highArousalCount = aiEntries.filter((e) => e.arousal === 'high').length;
+    const moodCounts = aiEntries.reduce((acc, e) => { acc[e.mood] = (acc[e.mood] || 0) + 1; return acc; }, {});
+    const commonMood = Object.entries(moodCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    const moodStats = {
+      totalEntries,
+      abnormalCount,
+      abnormalPercentage: totalEntries ? Math.round((abnormalCount / totalEntries) * 100) : 0,
+      highArousalCount,
+      commonMood,
+    };
 
     return {
       patient: {
@@ -349,12 +364,7 @@ class PatientService {
         total: totalMedications,
         adherenceRate
       },
-      mood: moodStats || {
-        totalEntries: 0,
-        averageScore: 0,
-        abnormalCount: 0,
-        abnormalPercentage: 0
-      }
+      mood: moodStats
     };
   }
 
