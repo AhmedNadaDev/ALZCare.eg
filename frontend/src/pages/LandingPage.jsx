@@ -6,6 +6,9 @@ import 'aos/dist/aos.css';
 // Lazy load DomeGallery for better initial page load
 const DomeGallery = lazy(() => import('../components/DomeGallery'));
 
+// Lazy load the immersive scroll-driven Features experience (heavy: three.js)
+const FeaturesExperience = lazy(() => import('../components/FeaturesExperience'));
+
 // ===== ICONS =====
 const ShieldIcon = () => (
   <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -170,7 +173,6 @@ const awarenessImages = [
 
 const LandingPage = () => {
   const [heroRef, heroVisible] = useScrollReveal();
-  const [featuresRef, featuresVisible] = useScrollReveal();
   const [awarenessRef, awarenessVisible] = useScrollReveal();
   const [statsRef, statsVisible] = useScrollReveal();
   const [ctaRef, ctaVisible] = useScrollReveal();
@@ -190,58 +192,6 @@ const LandingPage = () => {
     window.addEventListener('resize', AOS.refresh);
     return () => window.removeEventListener('resize', AOS.refresh);
   }, []);
-
-  // Dynamic AOS animations for features - alternating directions
-  const getFeatureAnimation = (index) => {
-    const animations = [
-      { aos: 'fade-right', delay: 0 },      // Card 1 - from left
-      { aos: 'fade-up', delay: 100 },        // Card 2 - from bottom
-      { aos: 'fade-left', delay: 200 },      // Card 3 - from right
-      { aos: 'fade-left', delay: 0 },        // Card 4 - from right
-      { aos: 'fade-up', delay: 100 },        // Card 5 - from bottom
-      { aos: 'fade-right', delay: 200 },     // Card 6 - from left
-    ];
-    return animations[index] || { aos: 'fade-up', delay: 0 };
-  };
-
-  const features = [
-    {
-      icon: BrainIcon,
-      title: "AI-Powered Recognition",
-      description: "Advanced facial and voice recognition helps patients identify loved ones and caregivers instantly.",
-      gradient: "from-purple-500 to-purple-700"
-    },
-    {
-      icon: ClockIcon,
-      title: "Smart Medication",
-      description: "Intelligent reminders and tracking ensure medication adherence with family notifications.",
-      gradient: "from-violet-500 to-purple-600"
-    },
-    {
-      icon: ActivityIcon,
-      title: "24/7 Monitoring",
-      description: "Real-time activity and health monitoring with instant emergency alerts to caregivers.",
-      gradient: "from-purple-600 to-purple-800"
-    },
-    {
-      icon: HeartIcon,
-      title: "Emotional Support",
-      description: "AI companion providing cognitive stimulation, comfort, and emotional wellbeing tracking.",
-      gradient: "from-violet-600 to-purple-700"
-    },
-    {
-      icon: MapPinIcon,
-      title: "Location Safety",
-      description: "Smart geofencing and indoor tracking for patient safety with wandering detection.",
-      gradient: "from-purple-500 to-violet-600"
-    },
-    {
-      icon: MicIcon,
-      title: "Voice Interaction",
-      description: "Natural voice commands and conversational AI for easy, hands-free interaction.",
-      gradient: "from-purple-700 to-purple-900"
-    }
-  ];
 
   const stats = [
     { value: 10000, suffix: '+', label: 'Patients Helped' },
@@ -350,98 +300,16 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* ===== TRUSTED BY - Infinite Loop ===== */}
-    
-
-      {/* ===== FEATURES SECTION ===== */}
-      <section ref={featuresRef} className="py-24 bg-[#0a0118] relative overflow-hidden">
-        {/* Background decoration */}
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl" />
-        
-        <div className="max-w-7xl mx-auto px-4 relative">
-          {/* Section Header with AOS */}
-          <div className="text-center mb-20">
-            <span 
-              data-aos="fade-down"
-              data-aos-duration="600"
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-500/20 to-violet-500/20 border border-purple-500/30 text-purple-300 font-medium text-sm rounded-full mb-6"
-            >
-              <BrainIcon className="h-4 w-4" />
-              Comprehensive Care Platform
-            </span>
-            <h2 
-              data-aos="fade-up"
-              data-aos-duration="800"
-              data-aos-delay="100"
-              className="text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-6"
-            >
-              Everything You Need for{' '}
-              <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-violet-400 bg-clip-text text-transparent">
-                Alzheimer's Care
-              </span>
-            </h2>
-            <p 
-              data-aos="fade-up"
-              data-aos-duration="800"
-              data-aos-delay="200"
-              className="text-lg md:text-xl text-gray-400 max-w-3xl mx-auto leading-relaxed"
-            >
-              Our AI system provides holistic support covering all aspects of Alzheimer's management, 
-              from daily care to emergency response.
-            </p>
+      {/* ===== FEATURES SECTION — immersive "one watch, nine capabilities" story ===== */}
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center bg-[#0a0118]">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-purple-500/30 border-t-purple-500" />
           </div>
-
-          {/* Features Grid with Dynamic AOS Animations */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-            {features.map((feature, index) => {
-              const animation = getFeatureAnimation(index);
-              return (
-                <div
-                  key={index}
-                  data-aos={animation.aos}
-                  data-aos-duration="800"
-                  data-aos-delay={animation.delay}
-                  data-aos-anchor-placement="top-bottom"
-                  className="group relative bg-gradient-to-br from-white/[0.05] to-white/[0.02] rounded-2xl p-8 border border-white/[0.08] hover:border-purple-500/40 transition-all duration-500 hover:-translate-y-2 overflow-hidden"
-                >
-                  {/* Hover glow effect */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-purple-600/0 to-violet-600/0 group-hover:from-purple-600/10 group-hover:to-violet-600/5 transition-all duration-500" />
-                  
-                  <div className="relative">
-                    <div 
-                      className={`h-14 w-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-3.5 text-white mb-6 shadow-lg shadow-purple-500/25 group-hover:scale-110 group-hover:shadow-purple-500/40 transition-all duration-300`}
-                    >
-                      <feature.icon />
-                    </div>
-                    <h3 className="text-xl font-bold text-white mb-3 group-hover:text-purple-200 transition-colors">{feature.title}</h3>
-                    <p className="text-gray-400 leading-relaxed">{feature.description}</p>
-                    
-                    {/* Bottom accent line */}
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-purple-500/0 via-purple-500/50 to-purple-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* CTA Button with AOS */}
-          <div 
-            data-aos="zoom-in"
-            data-aos-duration="600"
-            data-aos-delay="400"
-            className="text-center mt-16"
-          >
-            <Link
-              to="/features"
-              className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-violet-600 text-white font-semibold rounded-xl shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50 transition-all duration-300 hover:-translate-y-1 group"
-            >
-              <span>Explore All Features</span>
-              <ChevronRightIcon className="group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </div>
-        </div>
-      </section>
+        }
+      >
+        <FeaturesExperience />
+      </Suspense>
 
       {/* ===== GLOBAL AWARENESS SECTION ===== */}
       <section 
