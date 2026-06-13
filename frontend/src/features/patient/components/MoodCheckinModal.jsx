@@ -42,7 +42,13 @@ const RECORD_SECONDS = 12;
 const MIN_BLOB_BYTES = 512;
 const TARGET_SR = 16000;        // WavLM model sample rate — produce a real 16 kHz WAV
 const MIN_DURATION_S = 0.5;     // shorter than this is unusable
-const SILENCE_RMS = 0.0015;     // below this the clip is effectively silent/muted
+// True-silence / muted-track floor ONLY. Kept at or below the server's own gate
+// (mood_service/main.py rejects rms < 0.001) so a quiet-but-real speaker is NOT
+// rejected on the client — borderline audio is forwarded and the server returns a
+// graceful low-confidence Neutral with a note instead of a hard client error.
+// Both must be low together (a muted/dead mic) before we refuse to upload.
+const SILENCE_RMS  = 0.0008;
+const SILENCE_PEAK = 0.004;
 
 const MIME_CANDIDATES = [
   'audio/webm;codecs=opus',
@@ -131,13 +137,21 @@ const convertBlobToWAV = async (blob) => {
     const rendered = await offline.startRendering();
     pcm = rendered.getChannelData(0);
   } else {
+    // Fallback only when OfflineAudioContext is unavailable (rare). Downmix ALL
+    // channels to mono — not just the first two — so >2-channel inputs aren't skewed.
     outRate = decoded.sampleRate;
-    if (decoded.numberOfChannels === 1) {
+    const ch = decoded.numberOfChannels;
+    if (ch === 1) {
       pcm = decoded.getChannelData(0);
     } else {
-      const a = decoded.getChannelData(0), b = decoded.getChannelData(1);
-      pcm = new Float32Array(a.length);
-      for (let i = 0; i < a.length; i++) pcm[i] = (a[i] + b[i]) * 0.5;
+      const data = [];
+      for (let c = 0; c < ch; c++) data.push(decoded.getChannelData(c));
+      pcm = new Float32Array(data[0].length);
+      for (let i = 0; i < pcm.length; i++) {
+        let sum = 0;
+        for (let c = 0; c < ch; c++) sum += data[c][i];
+        pcm[i] = sum / ch;
+      }
     }
   }
 
@@ -201,8 +215,38 @@ const CountdownBar = ({ seconds, total }) => {
   );
 };
 
+// ── Live mic-level meter (STT-INDEPENDENT capture feedback) ─────────────────────
+// Reads the actual recording stream, so it stays live and honest even when the
+// cloud caption service produces nothing. This is the patient's real proof that
+// their microphone is being heard.
+const MicLevelMeter = ({ level }) => {
+  const SEGMENTS = 14;
+  const lit = Math.round((level || 0) * SEGMENTS);
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-center gap-[3px] h-7 xs:h-9" aria-hidden="true">
+        {Array.from({ length: SEGMENTS }).map((_, i) => {
+          const on = i < lit;
+          const tall = 0.35 + 0.65 * (i / SEGMENTS);
+          const color = i > SEGMENTS - 3 ? 'bg-amber-400' : i > SEGMENTS - 6 ? 'bg-green-400' : 'bg-green-500';
+          return (
+            <span
+              key={i}
+              className={`w-[5px] xs:w-1.5 rounded-full transition-all duration-75 ${on ? color : 'bg-white/[0.08]'}`}
+              style={{ height: `${Math.round(tall * 100)}%` }}
+            />
+          );
+        })}
+      </div>
+      <p className="text-center text-[10px] xs:text-xs text-gray-500">
+        {level > 0.04 ? 'Microphone is hearing you' : 'Listening for your voice…'}
+      </p>
+    </div>
+  );
+};
+
 // ── Live transcript panel (display-only; does NOT feed mood inference) ──────────
-const TranscriptPanel = ({ finalText, interimText, listening }) => {
+const TranscriptPanel = ({ finalText, interimText, listening, unavailable }) => {
   const hasText = finalText || interimText;
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 xs:p-4 text-left">
@@ -218,6 +262,8 @@ const TranscriptPanel = ({ finalText, interimText, listening }) => {
             <span className="text-white">{finalText}</span>
             {interimText && <span className="text-gray-400">{finalText ? ' ' : ''}{interimText}</span>}
           </>
+        ) : unavailable ? (
+          <span className="text-gray-500 italic">Live captions aren’t available in this browser — your voice is still being recorded.</span>
         ) : (
           <span className="text-gray-600 italic">Your words will appear here as you speak…</span>
         )}
@@ -237,65 +283,191 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
   const [interimTx, setInterimTx] = useState('');
   const [finalTx, setFinalTx]     = useState('');
   const [listening, setListening] = useState(false);
+  const [sttUnavailable, setSttUnavailable] = useState(false);
+
+  // Live mic-level meter (0..1) — STT-INDEPENDENT proof the microphone is actually
+  // capturing sound. The transcript (Web Speech API) is unreliable and browser/
+  // network-dependent; this meter reads the SAME MediaRecorder stream so the patient
+  // and care team always see that audio is being heard even when captions are blank.
+  const [micLevel, setMicLevel]   = useState(0);
 
   const mountedRef     = useRef(true);
+  const startedRef     = useRef(false);   // auto-run guard (StrictMode / re-render safe)
   const recorderRef    = useRef(null);
   const chunksRef      = useRef([]);
   const timerRef       = useRef(null);
   const streamRef      = useRef(null);
   const recognitionRef = useRef(null);
   const finalTxRef     = useRef('');
+  // Audio-meter plumbing + the loudest level actually seen this recording. If this
+  // stays ~0 the device was muted/dead (vs. a mere STT/caption failure) — logged so
+  // the failure mode is diagnosable from the console alone.
+  const audioCtxRef    = useRef(null);
+  const analyserRef    = useRef(null);
+  const meterRafRef    = useRef(null);
+  const maxMicRmsRef   = useRef(0);
+  // STT lifecycle (mirrors the working voiceUtils pattern: fresh recognizer per
+  // start, error-classified parent-owned restart with backoff)
+  const shouldListenRef = useRef(false);
+  const restartTimerRef = useRef(null);
+  const recogStartTsRef = useRef(0);
+  const failStreakRef   = useRef(0);
 
   const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
 
-  // ── Live speech-to-text (Web Speech API) — display only ──────────────────────
+  // ── Live speech-to-text (Web Speech API) — DISPLAY ONLY ──────────────────────
+  //
+  // Why a state machine: `webkitSpeechRecognition` is a cloud service that, by
+  // design, ends a session on silence / network blips / its ~60s cap, and it runs
+  // its OWN mic capture concurrently with our MediaRecorder. The working
+  // Medication/DailyPlan path stays reliable because it (a) classifies errors and
+  // (b) restarts a FRESH recognizer via the parent. We mirror that here:
+  //   • a fresh recognizer is created on every (re)start (never reuse an instance),
+  //   • `onstart` flips the "listening" indicator (no optimistic lie),
+  //   • benign ends (no-speech/aborted/network) auto-restart with backoff while
+  //     recording is still active, terminal errors (not-allowed) stop the loop,
+  //   • teardown clears intent BEFORE stop() so it can't auto-restart.
+  // It never feeds mood inference — that comes only from the recorded AUDIO → WavLM.
+
   const stopSTT = useCallback(() => {
+    shouldListenRef.current = false;
+    if (restartTimerRef.current) { clearTimeout(restartTimerRef.current); restartTimerRef.current = null; }
     setListening(false);
     const rec = recognitionRef.current;
     recognitionRef.current = null;
-    if (rec) { try { rec.onresult = rec.onend = rec.onerror = null; rec.stop(); } catch { /* ignore */ } }
+    if (rec) {
+      try { rec.onstart = rec.onresult = rec.onend = rec.onerror = null; rec.stop(); } catch { /* ignore */ }
+    }
+  }, []);
+
+  // Create + start a brand-new recognizer (self-reschedules on benign end).
+  const launchRecognizer = useCallback(function launch() {
+    if (!shouldListenRef.current || !mountedRef.current) return;
+    if (recognitionRef.current) return;                       // one at a time
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      console.warn('[MoodCheckin] SpeechRecognition unavailable — live captions disabled (audio still recorded)');
+      if (mountedRef.current) setSttUnavailable(true);
+      return;
+    }
+
+    const scheduleRestart = (delay) => {
+      recognitionRef.current = null;
+      if (!shouldListenRef.current || !mountedRef.current) { if (mountedRef.current) setListening(false); return; }
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = setTimeout(() => { restartTimerRef.current = null; launch(); }, delay);
+    };
+
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+      recogStartTsRef.current = performance.now();
+      if (mountedRef.current) { setListening(true); setSttUnavailable(false); }
+    };
+
+    rec.onresult = (evt) => {
+      failStreakRef.current = 0;                              // healthy: producing results
+      let interim = '';
+      for (let i = evt.resultIndex; i < evt.results.length; i++) {
+        const r = evt.results[i];
+        const txt = r[0]?.transcript || '';
+        if (r.isFinal) finalTxRef.current = `${finalTxRef.current} ${txt}`.trim();
+        else interim += txt;
+      }
+      if (!mountedRef.current) return;
+      setFinalTx(finalTxRef.current);
+      setInterimTx(interim);
+    };
+
+    rec.onerror = (e) => {
+      const err = e.error;
+      console.warn('[MoodCheckin] STT error:', err);
+      // Terminal: don't loop forever on a permission/service denial.
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        shouldListenRef.current = false;
+        if (mountedRef.current) setListening(false);
+      }
+      // no-speech / aborted / network / audio-capture → benign; onend will restart.
+    };
+
+    rec.onend = () => {
+      const aliveMs = performance.now() - recogStartTsRef.current;
+      failStreakRef.current = aliveMs < 400 ? failStreakRef.current + 1 : 0;
+      if (failStreakRef.current > 8) {                        // give up on a hot-fail loop
+        console.warn('[MoodCheckin] STT disabled after repeated fast failures — live captions off (audio still recorded)');
+        shouldListenRef.current = false;
+        recognitionRef.current = null;
+        if (mountedRef.current) { setListening(false); setSttUnavailable(true); }
+        return;
+      }
+      scheduleRestart(Math.min(1500, 250 + failStreakRef.current * 200));
+    };
+
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      // start() can throw if a previous session is still tearing down — retry fresh.
+      console.warn('[MoodCheckin] STT start threw, will retry:', err?.name);
+      recognitionRef.current = null;
+      scheduleRestart(300);
+    }
   }, []);
 
   const startSTT = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { console.warn('[MoodCheckin] SpeechRecognition unavailable — transcript disabled'); return; }
+    shouldListenRef.current = true;
+    failStreakRef.current = 0;
+    launchRecognizer();
+  }, [launchRecognizer]);
+
+  // ── Live mic-level meter (reads the SAME capture stream as MediaRecorder) ─────
+  // This is the trustworthy "we can hear you" signal: it does not depend on the
+  // cloud Speech API and proves the recorded waveform is non-silent. maxMicRmsRef
+  // records the loudest frame so submit-time can tell a muted/dead mic apart from
+  // a mere caption failure.
+  const stopMeter = useCallback(() => {
+    if (meterRafRef.current) { cancelAnimationFrame(meterRafRef.current); meterRafRef.current = null; }
+    try { analyserRef.current?.disconnect(); } catch { /* ignore */ }
+    analyserRef.current = null;
+    try { audioCtxRef.current?.close(); } catch { /* ignore */ }
+    audioCtxRef.current = null;
+    if (mountedRef.current) setMicLevel(0);
+  }, []);
+
+  const startMeter = useCallback((stream) => {
     try {
-      const rec = new SR();
-      rec.lang = 'en-US';
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-
-      rec.onresult = (evt) => {
-        let interim = '';
-        for (let i = evt.resultIndex; i < evt.results.length; i++) {
-          const r = evt.results[i];
-          const txt = r[0]?.transcript || '';
-          if (r.isFinal) {
-            finalTxRef.current = `${finalTxRef.current} ${txt}`.trim();
-          } else {
-            interim += txt;
-          }
-        }
-        if (!mountedRef.current) return;
-        setFinalTx(finalTxRef.current);
-        setInterimTx(interim);
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      ctx.resume?.().catch(() => {});
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);                 // NOT to destination — no echo/feedback
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      maxMicRmsRef.current = 0;
+      const buf = new Float32Array(analyser.fftSize);
+      const tick = () => {
+        const a = analyserRef.current;
+        if (!a || !mountedRef.current) return;
+        a.getFloatTimeDomainData(buf);
+        let sumSq = 0;
+        for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+        const rms = Math.sqrt(sumSq / buf.length);
+        if (rms > maxMicRmsRef.current) maxMicRmsRef.current = rms;
+        // Perceptual scaling for the bar: speech rms ~0.02–0.15 → fill the bar.
+        setMicLevel(Math.min(1, Math.sqrt(rms) * 3.6));
+        meterRafRef.current = requestAnimationFrame(tick);
       };
-      rec.onerror = (e) => { console.warn('[MoodCheckin] STT error:', e.error); };
-      rec.onend = () => {
-        // Chrome auto-stops; if we're still recording, restart to keep it continuous.
-        if (recognitionRef.current && recorderRef.current?.state === 'recording') {
-          try { rec.start(); return; } catch { /* ignore */ }
-        }
-        if (mountedRef.current) setListening(false);
-      };
-
-      recognitionRef.current = rec;
-      rec.start();
-      setListening(true);
-      console.log('[MoodCheckin] STT started (live transcript)');
+      meterRafRef.current = requestAnimationFrame(tick);
     } catch (err) {
-      console.warn('[MoodCheckin] STT start failed (non-fatal):', err);
+      console.warn('[MoodCheckin] mic meter unavailable (non-fatal):', err?.message);
     }
   }, []);
 
@@ -306,10 +478,11 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
       mountedRef.current = false;
       clearInterval(timerRef.current);
       stopSTT();
+      stopMeter();
       try { if (recorderRef.current?.state === 'recording') recorderRef.current.stop(); } catch { /* ignore */ }
       try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
     };
-  }, [stopSTT]);
+  }, [stopSTT, stopMeter]);
 
   // ── Submit: convert → validate → upload (audio → WavLM) ──────────────────────
   const submitAudio = useCallback(async (blob, mimeType) => {
@@ -340,8 +513,19 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
       setPhase(PHASE.ERROR);
       return;
     }
-    if (meta.peak < 0.01 || meta.rms < SILENCE_RMS) {
-      setErrorMsg("We couldn't hear anything. Please check the microphone and try again.");
+    // Reject ONLY a genuinely dead/muted capture (both peak AND rms at the floor).
+    // A quiet-but-real speaker is forwarded; the server's own gate returns a graceful
+    // low-confidence result for borderline audio rather than a hard client error.
+    const liveMaxRms = +maxMicRmsRef.current.toFixed(5);
+    console.log(`[MoodCheckin] gate: peak=${meta.peak} rms=${meta.rms} liveMaxRms=${liveMaxRms} (floors peak<${SILENCE_PEAK} rms<${SILENCE_RMS})`);
+    if (meta.peak < SILENCE_PEAK && meta.rms < SILENCE_RMS) {
+      const wasHeardLive = liveMaxRms > 0.01;
+      console.warn(`[MoodCheckin] silence gate REJECT — wasHeardLive=${wasHeardLive}`);
+      setErrorMsg(
+        wasHeardLive
+          ? 'We heard you, but the audio could not be processed this time. Please try again.'
+          : "We couldn't hear anything. Please check that your microphone is on and not muted, then try again."
+      );
       setPhase(PHASE.ERROR);
       return;
     }
@@ -380,6 +564,13 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
       throw new Error('Audio recording is not supported in this browser.');
     }
 
+    // Diagnostic: log the current mic permission state so a failed auto-capture is
+    // immediately explainable from the console (granted vs prompt vs denied).
+    try {
+      const ps = await navigator.permissions?.query?.({ name: 'microphone' });
+      if (ps) console.log(`[MoodCheckin] mic permission state: ${ps.state}`);
+    } catch { /* permissions API / 'microphone' name unsupported — ignore */ }
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -387,12 +578,23 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
         video: false,
       });
       streamRef.current = stream;
-      console.log('[MoodCheckin] mic granted; tracks:', stream.getAudioTracks().length);
+      const track = stream.getAudioTracks()[0];
+      const s = track?.getSettings?.() || {};
+      console.log(
+        `[MoodCheckin] mic granted; tracks=${stream.getAudioTracks().length} ` +
+        `label="${track?.label || '?'}" muted=${track?.muted} enabled=${track?.enabled} ` +
+        `state=${track?.readyState} sr=${s.sampleRate} ch=${s.channelCount}`
+      );
+      if (track?.muted) console.warn('[MoodCheckin] WARNING: audio track is muted at capture start');
+      startMeter(stream);                    // live, STT-independent capture-level feedback
     } catch (err) {
-      const msg = err.name === 'NotAllowedError'
-        ? 'Microphone access is blocked. Please allow the microphone for automatic check-ins.'
-        : err.name === 'NotFoundError'
+      console.error(`[MoodCheckin] getUserMedia failed: ${err?.name} — ${err?.message}`);
+      const msg = err.name === 'NotAllowedError' || err.name === 'SecurityError'
+        ? 'Microphone access is blocked. Tap “Enable” on the check-in card to allow the microphone, then check-ins run automatically.'
+        : err.name === 'NotFoundError' || err.name === 'OverconstrainedError'
         ? 'No microphone was found on this device.'
+        : err.name === 'NotReadableError'
+        ? 'The microphone is being used by another app. Please close it and try again.'
         : `Could not access microphone: ${err.message}`;
       throw new Error(msg);
     }
@@ -413,12 +615,16 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
     recorder.onerror = (e) => console.error('[MoodCheckin] MediaRecorder error:', e.error);
     recorder.onstop = () => {
       stopSTT();
+      stopMeter();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       if (!mountedRef.current) return;
       const finalMime = recorder.mimeType || mimeType || 'audio/webm';
       const blob = new Blob(chunksRef.current, { type: finalMime });
-      console.log(`[MoodCheckin] onstop: ${chunksRef.current.length} chunks → ${blob.size}B`);
+      console.log(
+        `[MoodCheckin] onstop: ${chunksRef.current.length} chunks → ${blob.size}B ` +
+        `(loudest mic rms this take=${maxMicRmsRef.current.toFixed(5)})`
+      );
       submitAudio(blob, finalMime);
     };
 
@@ -429,8 +635,14 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
       throw new Error(`Recording could not start: ${err.message}`);
     }
 
-    // Live transcript runs in parallel with the recorder (display only).
-    startSTT();
+    // Live transcript runs in parallel with the recorder (display only). Start it
+    // a beat AFTER the recorder's capture settles to minimise same-device init
+    // contention between MediaRecorder and SpeechRecognition's own mic session.
+    shouldListenRef.current = true;
+    restartTimerRef.current = setTimeout(() => {
+      restartTimerRef.current = null;
+      if (mountedRef.current && recorderRef.current?.state === 'recording') startSTT();
+    }, 450);
 
     setPhase(PHASE.RECORDING);
     setCountdown(RECORD_SECONDS);
@@ -448,11 +660,12 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
         }
       }
     }, 1000);
-  }, [submitAudio, startSTT, stopSTT]);
+  }, [submitAudio, startSTT, stopSTT, startMeter, stopMeter]);
 
   // ── AUTO-RUN: speak the prompt then start recording (no user interaction) ─────
   const beginCheckin = useCallback(async () => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || startedRef.current) return;
+    startedRef.current = true;               // run the auto-flow exactly once
     setPhase(PHASE.SPEAKING);
     const prompt = checkin?.prompt || 'Hello, I am the ALZCare system. How are you feeling today?';
     console.log('[MoodCheckin] speaking prompt:', prompt);
@@ -547,7 +760,8 @@ const MoodCheckinModal = ({ checkin, patientId, onDone, onDismiss }) => {
                 <p className="text-white text-lg xs:text-2xl font-bold">Listening…</p>
                 <p className="text-gray-400 text-xs xs:text-sm mt-1">Please tell me how you feel</p>
               </div>
-              <TranscriptPanel finalText={finalTx} interimText={interimTx} listening={listening} />
+              <MicLevelMeter level={micLevel} />
+              <TranscriptPanel finalText={finalTx} interimText={interimTx} listening={listening} unavailable={sttUnavailable} />
               <CountdownBar seconds={countdown} total={RECORD_SECONDS} />
             </div>
           )}
